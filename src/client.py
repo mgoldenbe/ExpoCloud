@@ -1,14 +1,11 @@
-# @ Meir Goldenberg The module is part of my code for parallel execution of
-# tasks on all available CPUs. Features of the code:
-# - Timeout of tasks
-# - Remembers hard tasks
-#   - Avoid starting a hard task based on history
-#   - Whenever a task is killed, kill other hard tasks currently running
-# - Can stop Google Compute Engine instance upon completion
+# @ Meir Goldenberg The module is part of the ExpoCloud Framework
 
 import multiprocessing as mp
+from multiprocessing.managers import SyncManager
+
 import time
 import sys
+import socket
 from . import util
 
 class AbstractTask:
@@ -76,51 +73,106 @@ class Worker(mp.Process):
         util.print_event("done", self)
         self._results.put(self.task)
 
-class Cluster():
+class Client:
+    """
+    The main client class.
     """
 
-    """
-
-    def __init__(self, tasks, timeout = 1000000):
-        self.cycle = 0.01 # waiting time between pings of workers
-        self.cycle_number = 0
+    def __init__(self):
+        """
+        Perform handshake with the server and create the queues to ask for tasks and to get them. 
+        """
+        self.cycle_wait = 0.01 # waiting time between cycles
+        self.response_wait = 1 # waiting time for response from the server
         self.workers = []
         self.id = 0 # next worker id
-        self.hard = [] # hard tasks, i.e. tasks that were overdue
-
-        # Store original order for results output, then sort by difficulty
-        for i, t in enumerate(tasks): 
-            t.orig_id = i
-        self.tasks = sorted(tasks)
-
-        self.tasks_dict = {}
-        for i, t in enumerate(self.tasks):
-            t.id = i
-            t.result = None
-            if t.parameters() not in self.tasks_dict:
-                t.param_id = 0
-                self.tasks_dict[t.parameters()] = [t]
-            else:
-                t.param_id = len(self.tasks_dict[t.parameters()])
-                self.tasks_dict[t.parameters()].append(t)
-        
-        # column titles
-        print("timestamp,descr,worker_id,task_id,param_id," + \
-              util.tuple_to_csv(tasks[0].parameter_titles()),
-              file=sys.stderr, flush=True)
-        # dump tasks
-        for t in self.tasks:
-            util.print_event("submitted", task=t)
-        
-        #self.tasks.reverse() # since we use pop() to get the new task
-        self.timeout = timeout
+        self.name = socket.gethostname()
+        self.titles_flag = False # whether have already output column titles
+        self.done_flag = False # True if there are no more tasks at the server
         self.results = mp.Queue()
         self.capacity = mp.cpu_count()
+
+        # Now perform the handshake with the server
+        server_ip = sys.argv[1]
+        server_port = sys.argv[2]
+        auth = b'myauth'
+
+        class ServerQueueManager(SyncManager):
+            pass
+
+        ServerQueueManager.register('handshake_q')
+        ServerQueueManager.register('hard_q')
+
+        request_tasks_q_name = f"request_tasks_{self.name}_q"
+        grant_tasks_q_name = f"grant_tasks_{self.name}_q"
+        ServerQueueManager.register(request_tasks_q_name)
+        ServerQueueManager.register(grant_tasks_q_name)
+
+        try:
+            manager = ServerQueueManager( \
+                address=(server_ip, server_port), authkey=auth)
+            manager.connect()
+        except:
+            print("Connection to server failed", file=sys.stderr, flush=True)
+            exit(1)
+
+        try:
+            handshake_q = manager.handshake_q()
+            handshake_q.put(self.name)
+            time.sleep(self.response_wait)
+            self.hard_q = manager.hard_q()
+            self.request_tasks_q = getattr(manager, request_tasks_q_name)()
+            self.grant_tasks_q = getattr(manager, grant_tasks_q_name)()
+        except:
+            print("Handshake with the server failed", 
+                  file=sys.stderr, flush=True)
+            exit(1)
+
+    def get_tasks(self, n: int) -> list[AbstractTask]:
+        """
+        Request n tasks from the server.
+        Return the list of tasks.
+        """
+        try:
+            self.request_tasks_q.put(n)
+            time.sleep(self.response_wait)
+            tasks = self.grant_tasks_q.get_nowait()
+        except:
+            print("Getting tasks failed", file=sys.stderr, flush=True)
+            exit(1)
+        
+        if len(tasks) < n:
+            self.done_flag = True
+
+        if not tasks: 
+            return []
+
+        if not self.titles_flag:
+            # column titles
+            print("timestamp,descr,worker_id,task_id,param_id," + \
+                  util.tuple_to_csv(tasks[0].parameter_titles()),
+                  file=sys.stderr, flush=True)
+        
+        for t in tasks:
+            util.print_event("received", task=t)
+        
+        return tasks
 
     def collect_done(self):
         self.workers = list(\
             filter(lambda worker: worker.is_alive(), self.workers))
 
+    def domino_effect(self, killed_worker):
+        """
+        Kill all tasks as hard or harder than this one and report to server.
+        """
+        for w in self.workers:
+            if w.killed: continue
+            if w.task >= killed_worker.task:
+                util.print_event("domino", w)
+                w.my_kill()
+        self.hard_q.put(killed_worker.task)
+        
     def kill_overdue(self):
         for worker in self.workers:
             if worker.killed: continue
@@ -129,26 +181,16 @@ class Cluster():
                 util.print_event("timeout", worker)
                 self.hard.append(worker.task)
                 worker.my_kill()
-                # now kill all tasks as hard or harder than this one
-                for w in self.workers:
-                    if w.killed: continue
-                    if w.task >= worker.task:
-                        util.print_event("domino", w)
-                        w.my_kill()
+                self.domino_effect(worker)                
 
     def process_workers(self):
         self.kill_overdue()
         self.collect_done()
 
-    def is_task_hard(self, task):
-        for h in self.hard:
-            if task >= h: return True
-        return False
-
-    def occupy_workers(self):
+    def occupy_workers(self, tasks):
         global id
-        while len(self.workers) < self.capacity and self.tasks:
-            task = self.tasks.pop()
+        while len(self.workers) < self.capacity and tasks:
+            task = tasks.pop(0)
             if self.is_task_hard(task):
                 util.print_event("not starting", task = task)
                 time.sleep(0.1)
@@ -159,16 +201,17 @@ class Cluster():
             worker.start()
 
     def run(self):
-        while self.tasks:
-            self.cycle_number += 1
+        while not self.done_flag:
             self.process_workers()
-            self.occupy_workers()
-            time.sleep(self.cycle)
+            n_free_workers = self.capacity - len(self.workers)
+            if n_free_workers > 0:
+                tasks += self.get_tasks(n_free_workers)
+                self.occupy_workers(tasks)
+            time.sleep(self.cycle_wait)
 
         while self.workers:
-            self.cycle_number += 1
             self.process_workers()
-            time.sleep(self.cycle)
+            time.sleep(self.cycle_wait)
         
         done_tasks = []
         while not self.results.empty():
