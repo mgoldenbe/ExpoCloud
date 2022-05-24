@@ -1,5 +1,4 @@
-from instance import *
-from src.parallel import AbstractTask
+from examples.samd.instance import *
 
 class Option:
     NO_CUTOFFS = "No cutoffs"
@@ -25,7 +24,10 @@ class Algorithm:
         self._opt_assignment = []
         self._expanded = 0
         self._time = (instance.time_super if self._heuristic_flag else 0)
-        
+
+    def result_titles(self):
+        return ("M_eps", "P", "Time", "Assignment")
+
     def search(self):
         try:
             before = time.time()
@@ -36,11 +38,9 @@ class Algorithm:
             assignment_str = ','.join([s.name() for s in self._opt_assignment])
             self._time += (time.time() - before)
             return \
-                self._instance.parameters_list() + \
-                [self._options, self._m, round(self._opt_prob_epsilon, 6), round(self._opt_prob, 3), self._expanded,
-                 round(self._time, 5), assignment_str]
+                 (round(self._opt_prob_epsilon, 6), round(self._opt_prob, 3), self._expanded, round(self._time, 5), assignment_str)
         except:
-            return self._instance.parameters_list() + [self._options, self._m, -1, -1, -1, -1, -1]
+            return self._instance.parameters() + (self._options, self._m, -1, -1, -1, -1, -1)
         
     def _search(self, assignment, distr, parent_utility):
         utility = self._utility(assignment, distr)
@@ -110,17 +110,3 @@ class Algorithm:
             supplier = my_assignment[i]
             distr = self._child_distr(distr, supplier)
             parent_prob = utility_with_min
-
-class Task(AbstractTask):
-    def __init__(self, options, instance, m = -1):
-        self.options = options
-        self.instance = instance
-        self.m = m
-
-    def parameters(self):
-        tasks = self.instance.tasks
-        suppliers = tasks[0].suppliers()
-        return [self.m, len(tasks), len(suppliers)]
-
-    def run(self):
-        return Algorithm(self.options, self.instance, self.m).search()

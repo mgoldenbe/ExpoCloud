@@ -1,8 +1,8 @@
 import sys
-sys.path.append('./legacy/') # so imports in the imported modules shouldn't fail
-from legacy.AStar_vs_huristcs_appx import *
-from legacy.Mesa import KolmogorovEfficientApproxOneSideOn2
-from legacy.OptTrim import optTrim
+sys.path.append('examples/samd/legacy/') # so imports in the imported modules shouldn't fail
+from examples.samd.legacy.AStar_vs_huristcs_appx import *
+from examples.samd.legacy.Mesa import KolmogorovEfficientApproxOneSideOn2
+from examples.samd.legacy.OptTrim import optTrim
 import random
 
 class Distribution:    
@@ -64,8 +64,11 @@ class Task:
     def add_supplier(self, supplier):
         self._suppliers += [supplier]
     
-    def parameters_list(self):
-        return [len(self._suppliers), self._suppliers[0].support_size()]
+    def parameter_titles(self):
+        return ("n_suppliers", "|support|")
+
+    def parameters(self):
+        return (len(self._suppliers), self._suppliers[0].support_size())
     
     # number of suppliers, number of times per supplier
     def __str__(self):
@@ -85,10 +88,13 @@ class Instance:
     def assign_id(self, i):
         self.id = i
     
+    def parameter_titles(self):
+        return ("id", "deadline", "n_tasks") + self.tasks[0].parameter_titles() + ("m_super",)
+
     # Output id, number of tasks, number of suppliers per task, 
     # number of times per supplier, m_super
-    def parameters_list(self):
-        return [self.id, self.deadline, len(self.tasks)] + self.tasks[0].parameters_list() + [self.m_super]
+    def parameters(self):
+        return (self.id, self.deadline, len(self.tasks)) + self.tasks[0].parameters() + (self.m_super,)
         
     def __str__(self):
         result = f"Instance {self.id}\n"

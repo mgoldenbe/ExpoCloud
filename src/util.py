@@ -6,6 +6,31 @@ except:
 
 import sys
 import time
+import socket
+from multiprocessing.managers import SyncManager
+
+class MessageType:
+    # to server
+    REQUEST_TASKS = 'REQUEST_TASKS'
+    BYE = 'BYE'
+    REPORT_HARD_TASK = 'REPORT_HARD_TASK'
+
+    # to client
+    GRANT_TASKS = 'GRANT_TASKS'
+    APPLY_DOMINO_EFFECT = 'APPLY_DOMINO_EFFECT'
+    NO_FURTHER_TASKS = 'NO_FURTHER_TASKS'
+    
+
+def handle_exception(e: Exception, msg: str, exit_flag: bool = True):
+    """
+    Print the custom error message and the exception and exit unless exit_flag==False.
+    """
+    print(msg, file=sys.stderr, flush=True)
+    print(e, file=sys.stderr, flush=True)
+    if exit_flag: exit(1)
+    
+def my_ip():
+    return socket.gethostbyname(socket.gethostname())
 
 def all_lt(t1, t2):
     """
@@ -30,7 +55,7 @@ global_begin = time.time()
 def print_event(descr, worker=None, task = None):
     worker_id = worker.id if worker else None
     task = task if task else worker.task
-    print(f"{round(time.time()-global_begin, 2)},{descr},{worker_id},{task.id},{task.param_id}," + \
+    print(f"{round(time.time()-global_begin, 2)},{descr},{worker_id},{task.id},"  + \
             tuple_to_csv(task.parameters()),
             file=sys.stderr, flush=True)
 

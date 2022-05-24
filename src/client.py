@@ -1,66 +1,26 @@
 # @ Meir Goldenberg The module is part of the ExpoCloud Framework
 
-import multiprocessing as mp
-from multiprocessing.managers import SyncManager
-
+from multiprocessing import Process, Value, Queue, cpu_count
 import time
 import sys
 import socket
-from . import util
+from multiprocessing.managers import SyncManager
 
-class AbstractTask:
-    """
-    This is a parent class for Task classes.
-    """
+from pkg_resources import working_set
 
-    def parameter_titles(self):
-        """
-        Returns the tuples of titles of columns for parameters for formatted output.
-        Global id and id per parameter setting are included by default and should not appear here.
-        """
-        return ()
-
-    def parameters(self):
-        """
-        Returns the tuple of parameters. These parameters are used by the cluster:
-        1. To determine the instance number for each parameter setting.
-        2. To provide formatted output.
-        Global id and id per parameter setting are included by default and should not appear here.
-        """
-        return ()
-    
-    def result_titles(self):
-        """
-        Returns the tuples of titles of columns for results for formatted output.
-        """
-        return ()
-
-    def __lt__(self, other):
-        """
-        Returns true if this task is strictly easier than the `other` task.
-        The following implementation relies on the existence of the hardness_parameters() function.
-        """
-        return util.all_lt(self.hardness_parameters(), 
-                           other.hardness_parameters())
-    
-    def __le__(self, other):
-        """
-        Returns true if this task is easier than or of the same hardness as the `other` task.
-        The following implementation relies on the existence of the hardness_parameters() function.
-        """
-        return util.all_le(self.hardness_parameters(), 
-                           other.hardness_parameters())
-        
+from src import util
+from src.util import MessageType
+from src.constants import Constants
 
 # Responsible for a single task
-class Worker(mp.Process):
-    def __init__(self, id, task, results):
-        mp.Process.__init__(self)
+class Worker(Process):
+    def __init__(self, id, task, results_q):
+        Process.__init__(self)
         self.id = id
         self.task = task
-        self._results = results
-        self.timestamp = mp.Value('d', 0)
-        self.killed = None
+        self._results_q = results_q
+        self.timestamp = Value('d', 0)
+        self.killed = False # takes time after kill() before is_alive() == False
 
     def my_kill(self):
         self.killed = True
@@ -71,7 +31,43 @@ class Worker(mp.Process):
         util.print_event("starting", self)
         self.task.result = self.task.run() # task should handle exceptions
         util.print_event("done", self)
-        self._results.put(self.task)
+        self._results_q.put(self.task)
+
+def handshake():
+    try:
+        server_ip = sys.argv[1]
+        server_port = Constants.SERVER_PORT
+        my_port = Constants.CLIENT_PORT
+        auth = b'myauth'
+    except Exception as e:
+        util.handle_exception(e, f"Wrong command-line arguments {sys.argv}")
+
+    try:
+        class MyManager(SyncManager):
+            pass
+        MyManager.register('handshake_q')
+        manager = MyManager(address=(server_ip, server_port), authkey=auth)
+        manager.connect()
+        manager.handshake_q().put((util.my_ip(), my_port))
+    except Exception as e:
+        util.handle_exception(e, 'Handshake with the server failed')
+
+def make_manager():
+    to_server_q = Queue()
+    to_client_q = Queue()
+    class MyManager(SyncManager):
+        pass
+    MyManager.register('to_server_q', callable=lambda: to_server_q)
+    MyManager.register('to_client_q', callable=lambda: to_client_q)
+
+    auth = b'myauth'
+    try:
+        manager = MyManager(address=('', Constants.CLIENT_PORT), authkey=auth)
+        manager.start()
+    except Exception as e:
+        util.handle_exception(e, 'Could not start manager')
+
+    return manager
 
 class Client:
     """
@@ -80,151 +76,132 @@ class Client:
 
     def __init__(self):
         """
-        Perform handshake with the server and create the queues to ask for tasks and to get them. 
+        Perform handshake with the server and create the queues:
+        self.bye_q - to inform the server when this client is done.
+        self.request_tasks_q - to request tasks from the server.
+        self.grant_tasks_q - to receive tasks from the server.
         """
-        self.cycle_wait = 0.01 # waiting time between cycles
-        self.response_wait = 1 # waiting time for response from the server
         self.workers = []
-        self.id = 0 # next worker id
+        self.next_worker_id = 0
         self.name = socket.gethostname()
         self.titles_flag = False # whether have already output column titles
-        self.done_flag = False # True if there are no more tasks at the server
-        self.results = mp.Queue()
-        self.capacity = mp.cpu_count()
+        self.tasks = [] # tasks not yet assigned to workers
+        self.done_tasks = []
+        self.n_requested = 0 # number of tasks requested, but not granted yet
+        self.no_further_tasks = False # True - no more tasks at the server
+        self.results_q = Queue()
+        self.capacity = cpu_count()
 
-        # Now perform the handshake with the server
-        server_ip = sys.argv[1]
-        server_port = sys.argv[2]
-        auth = b'myauth'
+        self.manager = make_manager()
+        self.to_server_q, self.to_client_q = \
+            self.manager.to_server_q(), self.manager.to_client_q()
+        handshake()
 
-        class ServerQueueManager(SyncManager):
-            pass
-
-        ServerQueueManager.register('handshake_q')
-        ServerQueueManager.register('hard_q')
-
-        request_tasks_q_name = f"request_tasks_{self.name}_q"
-        grant_tasks_q_name = f"grant_tasks_{self.name}_q"
-        ServerQueueManager.register(request_tasks_q_name)
-        ServerQueueManager.register(grant_tasks_q_name)
-
-        try:
-            manager = ServerQueueManager( \
-                address=(server_ip, server_port), authkey=auth)
-            manager.connect()
-        except:
-            print("Connection to server failed", file=sys.stderr, flush=True)
-            exit(1)
-
-        try:
-            handshake_q = manager.handshake_q()
-            handshake_q.put(self.name)
-            time.sleep(self.response_wait)
-            self.hard_q = manager.hard_q()
-            self.request_tasks_q = getattr(manager, request_tasks_q_name)()
-            self.grant_tasks_q = getattr(manager, grant_tasks_q_name)()
-        except:
-            print("Handshake with the server failed", 
-                  file=sys.stderr, flush=True)
-            exit(1)
-
-    def get_tasks(self, n: int) -> list[AbstractTask]:
-        """
-        Request n tasks from the server.
-        Return the list of tasks.
-        """
-        try:
-            self.request_tasks_q.put(n)
-            time.sleep(self.response_wait)
-            tasks = self.grant_tasks_q.get_nowait()
-        except:
-            print("Getting tasks failed", file=sys.stderr, flush=True)
-            exit(1)
-        
-        if len(tasks) < n:
-            self.done_flag = True
-
-        if not tasks: 
-            return []
+    def process_grant_tasks(self, tasks):
+        self.n_requested -= len(tasks)
+        self.tasks += tasks
 
         if not self.titles_flag:
             # column titles
-            print("timestamp,descr,worker_id,task_id,param_id," + \
+            self.titles_flag = True
+            print("timestamp,descr,worker_id,task_id," + \
                   util.tuple_to_csv(tasks[0].parameter_titles()),
                   file=sys.stderr, flush=True)
         
         for t in tasks:
             util.print_event("received", task=t)
-        
-        return tasks
-
-    def collect_done(self):
-        self.workers = list(\
-            filter(lambda worker: worker.is_alive(), self.workers))
-
-    def domino_effect(self, killed_worker):
+    
+    def apply_domino_effect(self, hard):
         """
-        Kill all tasks as hard or harder than this one and report to server.
+        1. Kills the workers that execute tasks harder than `hard`.
+        2. Removes tasks harder than `hard` from self.tasks.
         """
         for w in self.workers:
             if w.killed: continue
-            if w.task >= killed_worker.task:
+            if w.task.hardness >= hard:
                 util.print_event("domino", w)
                 w.my_kill()
-        self.hard_q.put(killed_worker.task)
+                
+        filter(lambda t: t.hardness < hard, self.tasks)
+
+    def process_no_further_tasks(self, _body):
+        self.no_further_tasks = True
+
+    def process_messages(self):
+        while not self.to_client_q.empty():
+            type, body = self.to_client_q.get_nowait()
+            {MessageType.GRANT_TASKS: self.process_grant_tasks,
+             MessageType.APPLY_DOMINO_EFFECT: self.apply_domino_effect,
+             MessageType.NO_FURTHER_TASKS: self.process_no_further_tasks} \
+             [type](body)
+
+    def request_tasks(self, n: int):
+        """
+        Request n tasks from the server.
+        """
+        if n == 0: return
+        self.n_requested += n
+        self.to_server_q.put((MessageType.REQUEST_TASKS, n))
         
+    def collect_results(self):
+        while not self.results_q.empty():
+            self.done_tasks.append(self.results_q.get_nowait())
+
+    def collect_done(self):
+        self.collect_results()
+        self.workers = list(\
+            filter(lambda worker: worker.is_alive(), 
+                   self.workers))
+
     def kill_overdue(self):
         for worker in self.workers:
             if worker.killed: continue
             before = worker.timestamp.value
-            if before and time.time() - before > self.timeout:
+            if before and time.time() - before > worker.task.timeout:
                 util.print_event("timeout", worker)
-                self.hard.append(worker.task)
                 worker.my_kill()
-                self.domino_effect(worker)                
+                self.to_server_q.put((MessageType.REPORT_HARD_TASK, 
+                                      worker.task.id))                
 
     def process_workers(self):
-        self.kill_overdue()
         self.collect_done()
+        self.kill_overdue()
 
-    def occupy_workers(self, tasks):
-        global id
-        while len(self.workers) < self.capacity and tasks:
-            task = tasks.pop(0)
-            if self.is_task_hard(task):
-                util.print_event("not starting", task = task)
-                time.sleep(0.1)
-                continue
-            self.id += 1
-            worker = Worker(self.id, task, self.results)
+    def occupy_workers(self):
+        while len(self.workers) < self.capacity and self.tasks:
+            task = self.tasks.pop(0)
+            worker = Worker(self.next_worker_id, task, self.results_q)
+            self.next_worker_id += 1
             self.workers.append(worker)
             worker.start()
 
     def run(self):
-        while not self.done_flag:
+        while self.tasks or not self.no_further_tasks:
             self.process_workers()
-            n_free_workers = self.capacity - len(self.workers)
-            if n_free_workers > 0:
-                tasks += self.get_tasks(n_free_workers)
-                self.occupy_workers(tasks)
-            time.sleep(self.cycle_wait)
+            if not self.no_further_tasks:
+                n_tasks_in_pipeline = \
+                    len(self.workers) + len(self.tasks) + self.n_requested
+                self.request_tasks(self.capacity - n_tasks_in_pipeline)
+            self.process_messages()
+            self.occupy_workers()
+            time.sleep(Constants.CLIENT_CYCLE_WAIT)
 
         while self.workers:
             self.process_workers()
-            time.sleep(self.cycle_wait)
-        
-        done_tasks = []
-        while not self.results.empty():
-            done_tasks.append(self.results.get())
+            time.sleep(Constants.CLIENT_CYCLE_WAIT)
+
+        # restore order and print results
+        self.done_tasks.sort(key = lambda t: t.orig_id)
+        if self.done_tasks:
+            print(util.tuple_to_csv(self.done_tasks[0].parameter_titles() + \
+                                    self.done_tasks[0].result_titles()))
+            for t in self.done_tasks:
+                print(util.tuple_to_csv(t.parameters() + t.result))
+                
+        self.to_server_q.put((MessageType.BYE, None))
+        time.sleep(Constants.CLIENT_WAIT_AFTER_SENDING_BYE)
+        self.manager.shutdown()
 
         # TODO: form dictionary parameters => number of done tasks
         # Filter done tasks to include only those with enough done tasks with the same parameters.
         # See if tasks_dict is used.
-
-        # restore order
-        done_tasks.sort(key = lambda t: t.orig_id)
-        if done_tasks:
-            print(util.tuple_to_csv(done_tasks[0].parameter_titles() + \
-                                    done_tasks[0].result_titles()))
-            for t in done_tasks:
-                print(util.tuple_to_csv(t.parameters() + t.result))
