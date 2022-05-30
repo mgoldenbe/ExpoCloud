@@ -14,6 +14,8 @@ class MessageType:
     REQUEST_TASKS = 'REQUEST_TASKS'
     BYE = 'BYE'
     REPORT_HARD_TASK = 'REPORT_HARD_TASK'
+    LOG = 'LOG'
+    EXCEPTION = 'EXCEPTION'
 
     # to client
     GRANT_TASKS = 'GRANT_TASKS'
@@ -21,12 +23,16 @@ class MessageType:
     NO_FURTHER_TASKS = 'NO_FURTHER_TASKS'
     
 
-def handle_exception(e: Exception, msg: str, exit_flag: bool = True):
+def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
+                     to_server_q = None):
     """
     Print the custom error message and the exception and exit unless exit_flag==False.
     """
-    print(msg, file=sys.stderr, flush=True)
-    print(e, file=sys.stderr, flush=True)
+    descr = msg + "\n" + str(e)
+    if to_server_q:
+        to_server_q.put((MessageType.EXCEPTION, descr))
+    else:
+        print(descr, file=sys.stderr, flush=True)
     if exit_flag: exit(1)
     
 def my_ip():
@@ -52,12 +58,24 @@ def tuple_to_csv(t):
     return ",".join([str(el) for el in t])
 
 global_begin = time.time()
-def print_event(descr, worker=None, task = None):
+
+def output_event(to_server_q, descr, worker, task):
+    """
+    This function should not be invoked directly. Rather, use either `print_event` or `event_to_server`.
+    """
     worker_id = worker.id if worker else None
     task = task if task else worker.task
-    print(f"{round(time.time()-global_begin, 2)},{descr},{worker_id},{task.id},"  + \
-            tuple_to_csv(task.parameters()),
-            file=sys.stderr, flush=True)
+    descr = f"{round(time.time()-global_begin, 2)},{descr},{worker_id},{task.id},"  + tuple_to_csv(task.parameters())
+    if to_server_q:
+        to_server_q.put((MessageType.LOG, descr))
+    else:
+        print(descr, file=sys.stderr, flush=True)
+
+def print_event(descr, worker=None, task = None):
+    output_event(None, descr, worker, task)
+    
+def event_to_server(to_server_q, descr, worker=None, task = None):
+    output_event(to_server_q, descr, worker, task)
 
 # https://cloud.google.com/compute/docs/reference/rest/v1/instances/stop
 # Remember to give access to all APIs in the instance configuration

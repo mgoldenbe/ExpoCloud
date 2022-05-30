@@ -14,11 +14,12 @@ from src.constants import Constants
 
 # Responsible for a single task
 class Worker(Process):
-    def __init__(self, id, task, results_q):
+    def __init__(self, id, task, results_q, to_server_q):
         Process.__init__(self)
         self.id = id
         self.task = task
         self._results_q = results_q
+        self.to_server_q = to_server_q
         self.timestamp = Value('d', 0)
         self.killed = False # takes time after kill() before is_alive() == False
 
@@ -28,9 +29,9 @@ class Worker(Process):
 
     def run(self):
         self.timestamp.value = time.time()
-        util.print_event("starting", self)
+        util.event_to_server(self.to_server_q, "starting", self)
         self.task.result = self.task.run() # task should handle exceptions
-        util.print_event("done", self)
+        util.event_to_server(self.to_server_q, "done", self)
         self._results_q.put(self.task)
 
 def handshake():
@@ -104,12 +105,13 @@ class Client:
         if not self.titles_flag:
             # column titles
             self.titles_flag = True
-            print("timestamp,descr,worker_id,task_id," + \
-                  util.tuple_to_csv(tasks[0].parameter_titles()),
-                  file=sys.stderr, flush=True)
+            self.to_server_q.put( \
+                (MessageType.LOG, 
+                 "timestamp,descr,worker_id,task_id," + \
+                 util.tuple_to_csv(tasks[0].parameter_titles())))
         
         for t in tasks:
-            util.print_event("received", task=t)
+            util.event_to_server(self.to_server_q, "received", task=t)
     
     def apply_domino_effect(self, hard):
         """
@@ -119,7 +121,7 @@ class Client:
         for w in self.workers:
             if w.killed: continue
             if w.task.hardness >= hard:
-                util.print_event("domino", w)
+                util.event_to_server(self.to_server_q, "domino", w)
                 w.my_kill()
                 
         filter(lambda t: t.hardness < hard, self.tasks)
@@ -158,7 +160,7 @@ class Client:
             if worker.killed: continue
             before = worker.timestamp.value
             if before and time.time() - before > worker.task.timeout:
-                util.print_event("timeout", worker)
+                util.event_to_server(self.to_server_q, "timeout", worker)
                 worker.my_kill()
                 self.to_server_q.put((MessageType.REPORT_HARD_TASK, 
                                       worker.task.id))                
@@ -170,7 +172,8 @@ class Client:
     def occupy_workers(self):
         while len(self.workers) < self.capacity and self.tasks:
             task = self.tasks.pop(0)
-            worker = Worker(self.next_worker_id, task, self.results_q)
+            worker = Worker(self.next_worker_id, task, 
+                            self.results_q, self.to_server_q)
             self.next_worker_id += 1
             self.workers.append(worker)
             worker.start()

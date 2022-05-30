@@ -4,6 +4,7 @@ from multiprocessing import Queue
 from multiprocessing.managers import SyncManager
 
 import time
+import os
 import sys
 from src import util
 from src.util import MessageType, handle_exception
@@ -34,10 +35,18 @@ def get_handshake_manager():
     return manager
 
 class Client():
-    def __init__(self, ip: str, port: int):
+    def __init__(self, ip: str, port: int, parent_dir='output'):
         self.ip = ip
         self.port = port
         self.to_server_q, self.to_client_q = get_client_queues(ip, port)
+        path = os.path.join(parent_dir, self.ip)
+        os.makedirs(path, exist_ok=True)
+        self.events_file = open(os.path.join(path, 'events.txt'), "w")
+        self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "w")
+    
+    def __del__(self):
+        self.events_file.close()
+        self.exceptions_file.close()
         
 class Cluster():
     """
@@ -100,6 +109,12 @@ class Cluster():
                 handle_exception(e, "Failed to send tasks")
         if n > 0: client.to_client_q.put((MessageType.NO_FURTHER_TASKS, None))
 
+    def process_log(self, client, descr):
+        print(descr, file=client.events_file, flush=True)
+
+    def process_exception(self, client, descr):
+        print(descr, file=client.exceptions_file, flush=True)
+
     def process_report_hard_task(self, _client, task_id):
         """
         Handle the overdue task: 
@@ -122,6 +137,8 @@ class Cluster():
             while not c.to_server_q.empty():
                 type, body = c.to_server_q.get_nowait()
                 {MessageType.REQUEST_TASKS: self.process_request_tasks,
+                 MessageType.LOG: self.process_log,
+                 MessageType.EXCEPTION: self.process_exception,
                  MessageType.REPORT_HARD_TASK: self.process_report_hard_task,
                  MessageType.BYE: self.process_bye}[type](c, body)
 
