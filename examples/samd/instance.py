@@ -51,7 +51,7 @@ class Supplier:
 
 # List of suppliers to string
 def assignment2str(assignment):
-    return ','.join([s.name() for s in assignment])
+    return ';'.join([s.name() for s in assignment])
 
 class Task:
     def __init__(self, task_id):
@@ -65,7 +65,7 @@ class Task:
         self._suppliers += [supplier]
     
     def parameter_titles(self):
-        return ("n_suppliers", "|support|")
+        return ("n_sup", "spprt")
 
     def parameters(self):
         return (len(self._suppliers), self._suppliers[0].support_size())
@@ -89,7 +89,8 @@ class Instance:
         self.id = i
     
     def parameter_titles(self):
-        return ("id", "deadline", "n_tasks") + self.tasks[0].parameter_titles() + ("m_super",)
+        return ("id", "ddln", "|T|") + \
+               self.tasks[0].parameter_titles() + ("m_spr",)
 
     # Output id, number of tasks, number of suppliers per task, 
     # number of times per supplier, m_super

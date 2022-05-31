@@ -35,7 +35,7 @@ def get_handshake_manager():
     return manager
 
 class Client():
-    def __init__(self, ip: str, port: int, parent_dir='output'):
+    def __init__(self, ip: str, port: int, parent_dir: str):
         self.ip = ip
         self.port = port
         self.to_server_q, self.to_client_q = get_client_queues(ip, port)
@@ -52,9 +52,11 @@ class Cluster():
     """
 
     """
-    def __init__(self, tasks):
+    def __init__(self, tasks, min_group_size = 0, output_folder = 'output'):
+        """
+        `min_group_size` - minimal size of group defined by the Task's `group_parameter_titles` method.
+        """
         self.clients = []
-        print("in Cluster.__init__", file=sys.stderr, flush=True)
         self.handshake_manager = get_handshake_manager()
         self.handshake_q = self.handshake_manager.handshake_q()
 
@@ -64,18 +66,21 @@ class Cluster():
         self.tasks = sorted(tasks, key = lambda t: t.hardness)
         self.next_task = 0 # next task to be given to clients
         self.min_hard = [] # hardness for each minimally hard task
+        self.group_counts = {} # number of done tasks for each group
+        self.min_group_size = min_group_size
 
         for i, t in enumerate(self.tasks):
             t.id = i
             t.result = None
         
-        # column titles
-        print("timestamp,descr,worker_id,task_id," + \
-              util.tuple_to_csv(tasks[0].parameter_titles()),
-              file=sys.stderr, flush=True)
-        # dump tasks
-        for t in self.tasks:
-            util.print_event("submitted", task=t)
+        self.output_folder = output_folder
+        os.makedirs(self.output_folder, exist_ok=True)
+        self.results_file = \
+            open(os.path.join(self.output_folder, 'results.txt'), "w")
+
+    def __del__(self):
+        self.results_file.close()
+        self.handshake_manager.shutdown()
 
     def is_hard(self, hardness):
         """
@@ -90,7 +95,8 @@ class Cluster():
             client_ip, client_port = self.handshake_q.get_nowait()
             if client_ip in [c.ip for c in self.clients]: continue
             try:
-                self.clients.append(Client(client_ip, client_port))
+                self.clients.append(
+                    Client(client_ip, client_port, self.output_folder))
             except:
                 pass
         
@@ -115,6 +121,14 @@ class Cluster():
     def process_exception(self, client, descr):
         print(descr, file=client.exceptions_file, flush=True)
 
+    def process_result(self, client, body):
+        id, result = body
+        task = self.tasks[id]
+        task.result = result
+        group = task.group_parameters()
+        if group not in self.group_counts: self.group_counts[group] = 0
+        self.group_counts[group] += 1
+            
     def process_report_hard_task(self, _client, task_id):
         """
         Handle the overdue task: 
@@ -139,13 +153,28 @@ class Cluster():
                 {MessageType.REQUEST_TASKS: self.process_request_tasks,
                  MessageType.LOG: self.process_log,
                  MessageType.EXCEPTION: self.process_exception,
+                 MessageType.RESULT: self.process_result,
                  MessageType.REPORT_HARD_TASK: self.process_report_hard_task,
                  MessageType.BYE: self.process_bye}[type](c, body)
 
+    def print_results(self):
+        """
+        Restore the original order of tasks and print results.
+        """
+        self.tasks.sort(key = lambda t: t.orig_id)
+        print(util.tuple_to_csv(self.tasks[0].parameter_titles() + \
+                                self.tasks[0].result_titles()),
+              file = self.results_file)
+        for t in self.tasks:
+            if not t.result: continue
+            if self.group_counts[t.group_parameters()] >= self.min_group_size:
+                print(util.tuple_to_csv(t.parameters() + t.result), 
+                      file = self.results_file)
+
     def run(self):
-        print("Ready for clients", flush=True)
+        print(f"Got {len(self.tasks)} tasks and ready for clients", flush=True)
         while self.next_task < len(self.tasks) or self.clients:
             self.accept_handshakes()
             self.handle_messages()
             time.sleep(Constants.SERVER_CYCLE_WAIT)
-        self.handshake_manager.shutdown()
+        self.print_results()

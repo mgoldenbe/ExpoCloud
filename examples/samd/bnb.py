@@ -26,7 +26,7 @@ class Algorithm:
         self._time = (instance.time_super if self._heuristic_flag else 0)
 
     def result_titles(self):
-        return ("M_eps", "P", "Time", "Assignment")
+        return ("M_eps", "P", "Exp", "Time", "Assgn")
 
     def search(self):
         try:
@@ -35,7 +35,7 @@ class Algorithm:
             if self._epsilon_flag or self._epsilon_perfect_flag:
                 self._opt_prob_epsilon = self._opt_prob
                 self._opt_prob = self._assignment_to_prob(self._opt_assignment)
-            assignment_str = ','.join([s.name() for s in self._opt_assignment])
+            assignment_str = assignment2str(self._opt_assignment)
             self._time += (time.time() - before)
             return \
                  (round(self._opt_prob_epsilon, 6), round(self._opt_prob, 3), self._expanded, round(self._time, 5), assignment_str)

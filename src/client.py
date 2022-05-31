@@ -30,9 +30,9 @@ class Worker(Process):
     def run(self):
         self.timestamp.value = time.time()
         util.event_to_server(self.to_server_q, "starting", self)
-        self.task.result = self.task.run() # task should handle exceptions
+        result = self.task.run()
+        self.to_server_q.put((MessageType.RESULT, (self.task.id, result)))
         util.event_to_server(self.to_server_q, "done", self)
-        self._results_q.put(self.task)
 
 def handshake():
     try:
@@ -192,19 +192,7 @@ class Client:
         while self.workers:
             self.process_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
-
-        # restore order and print results
-        self.done_tasks.sort(key = lambda t: t.orig_id)
-        if self.done_tasks:
-            print(util.tuple_to_csv(self.done_tasks[0].parameter_titles() + \
-                                    self.done_tasks[0].result_titles()))
-            for t in self.done_tasks:
-                print(util.tuple_to_csv(t.parameters() + t.result))
                 
         self.to_server_q.put((MessageType.BYE, None))
         time.sleep(Constants.CLIENT_WAIT_AFTER_SENDING_BYE)
         self.manager.shutdown()
-
-        # TODO: form dictionary parameters => number of done tasks
-        # Filter done tasks to include only those with enough done tasks with the same parameters.
-        # See if tasks_dict is used.

@@ -38,6 +38,22 @@ class AbstractTask:
         self.hardness = self.Hardness(self.hardness_parameters())
         self.result = None
 
+    def group_parameter_titles(self):
+        """
+        Returns the tuples of titles of columns for parameters that determine groups for counting the number of non-hard instances.
+        """
+        return ()
+    
+    def group_parameters(self):
+        """Returns the parameters that determine groups for counting the number of non-hard instances. This method should not be overrided."""
+        all_titles = self.parameter_titles()
+        group_titles = self.group_parameter_titles()
+        indices = [i for i in range(len(all_titles)) 
+                   if all_titles[i] in group_titles]
+
+        all_params = self.parameters()
+        return tuple(all_params[i] for i in indices)
+
     def parameter_titles(self):
         """
         Returns the tuples of titles of columns for parameters for formatted output.

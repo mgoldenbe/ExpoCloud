@@ -1,4 +1,5 @@
 from src.abstract_task import AbstractTask
+from src import util
 from examples.samd.bnb import Algorithm
 
 class Task(AbstractTask):
@@ -9,6 +10,9 @@ class Task(AbstractTask):
         self.timeout = timeout
         self.algorithm = Algorithm(self.options, self.instance, self.m)
         super(Task, self).__init__()
+
+    def group_parameter_titles(self):
+        return util.filter_out(self.parameter_titles(), ('id',))
 
     def parameter_titles(self):
         return self.instance.parameter_titles() + ("Options", "m")

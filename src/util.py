@@ -8,14 +8,16 @@ import sys
 import time
 import socket
 from multiprocessing.managers import SyncManager
+from typing import Tuple
 
 class MessageType:
     # to server
     REQUEST_TASKS = 'REQUEST_TASKS'
-    BYE = 'BYE'
+    RESULT = 'RESULT'
     REPORT_HARD_TASK = 'REPORT_HARD_TASK'
     LOG = 'LOG'
     EXCEPTION = 'EXCEPTION'
+    BYE = 'BYE'
 
     # to client
     GRANT_TASKS = 'GRANT_TASKS'
@@ -50,6 +52,12 @@ def all_le(t1, t2):
     Returns True if t1 and t2 are of same length and all elements of t1 are smaller or equal to the corresponding elements of t2.
     """
     return t1 == t2 or all_lt(t1, t2)
+
+def filter_out(t1: Tuple, t2: Tuple):
+    """
+    Returns the tuple of elements in t1 that are not in t2.
+    """
+    return tuple(filter(lambda el: el not in t2, t1))
 
 def tuple_to_csv(t):
     """
