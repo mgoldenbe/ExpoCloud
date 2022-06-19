@@ -6,6 +6,7 @@ from multiprocessing.managers import SyncManager
 import time
 import os
 import sys
+from src.abstract_engine import InstanceType
 from src import util
 from src.util import MessageType, handle_exception
 from src.constants import Constants
@@ -13,6 +14,7 @@ from src.constants import Constants
 def get_client_queues(ip, port):
     class MyManager(SyncManager):
         pass
+    
     MyManager.register('to_server_q')
     MyManager.register('to_client_q')
     auth = b'myauth'
@@ -35,27 +37,40 @@ def get_handshake_manager():
     return manager
 
 class Client():
-    def __init__(self, ip: str, port: int, parent_dir: str):
-        self.ip = ip
+    def __init__(self, engine):
+        self.engine = engine
+        self.active_timestamp = None
+        self.name, self.ip = None, None
+        result = engine.run_instance(InstanceType.CLIENT)
+        self.name, self.ip = result
+        self.creation_timestamp = time.time()
+    
+    def __del__(self):
+        if self.active_timestamp:
+            self.events_file.close()
+            self.exceptions_file.close()
+        if self.name:
+            self.engine.kill_instance(self.name)
+    
+    def shake_hands(self, port: int, parent_dir: str):
+        self.active_timestamp = time.time()
         self.port = port
-        self.to_server_q, self.to_client_q = get_client_queues(ip, port)
+        self.to_server_q, self.to_client_q = get_client_queues(self.ip, port)
         path = os.path.join(parent_dir, self.ip)
         os.makedirs(path, exist_ok=True)
         self.events_file = open(os.path.join(path, 'events.txt'), "w")
         self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "w")
-    
-    def __del__(self):
-        self.events_file.close()
-        self.exceptions_file.close()
-        
+
 class Cluster():
     """
 
     """
-    def __init__(self, tasks, min_group_size = 0, output_folder = 'output'):
+    def __init__(self, tasks, engine, 
+                 min_group_size = 0, output_folder = 'output'):
         """
         `min_group_size` - minimal size of group defined by the Task's `group_parameter_titles` method.
         """
+        self.engine = engine
         self.clients = []
         self.handshake_manager = get_handshake_manager()
         self.handshake_q = self.handshake_manager.handshake_q()
@@ -77,7 +92,7 @@ class Cluster():
         os.makedirs(self.output_folder, exist_ok=True)
         self.results_file = \
             open(os.path.join(self.output_folder, 'results.txt'), "w")
-
+        
     def __del__(self):
         self.results_file.close()
         self.handshake_manager.shutdown()
@@ -93,12 +108,14 @@ class Cluster():
     def accept_handshakes(self):
         while not self.handshake_q.empty():
             client_ip, client_port = self.handshake_q.get_nowait()
-            if client_ip in [c.ip for c in self.clients]: continue
             try:
-                self.clients.append(
-                    Client(client_ip, client_port, self.output_folder))
-            except:
-                pass
+                client = next(filter(lambda c: c.ip == client_ip, self.clients))
+            except Exception as e:
+                util.handle_exception(
+                    e, f"Unknown client tried to connect from {client_ip}", 
+                    exit_flag=False)
+                continue
+            client.shake_hands(client_port, self.output_folder)
         
     def process_request_tasks(self, client: Client, n: int):
         tasks = []
@@ -143,11 +160,13 @@ class Cluster():
             c.to_client_q.put((MessageType.APPLY_DOMINO_EFFECT, hardness))
 
     def process_bye(self, client, _body):
+        print('Got bye from', client.ip, flush=True)
         self.clients = \
             list(filter(lambda c: c.ip != client.ip, self.clients))
 
     def handle_messages(self):
         for c in self.clients:
+            if not c.active_timestamp: continue
             while not c.to_server_q.empty():
                 type, body = c.to_server_q.get_nowait()
                 {MessageType.REQUEST_TASKS: self.process_request_tasks,
@@ -171,10 +190,23 @@ class Cluster():
                 print(util.tuple_to_csv(t.parameters() + t.result), 
                       file = self.results_file)
 
+    def create_client(self):
+        if self.engine.can_create_instance():
+            self.clients.append(Client(self.engine))
+
+    def kill_non_active_clients(self):
+        overdue = lambda c: time.time() - c.creation_timestamp > \
+                            Constants.CLIENT_MAX_NON_ACTIVE_TIME
+        self.clients = \
+            list(filter(lambda c: c.active_timestamp or not overdue(c), 
+                        self.clients))
+
     def run(self):
         print(f"Got {len(self.tasks)} tasks and ready for clients", flush=True)
         while self.next_task < len(self.tasks) or self.clients:
             self.accept_handshakes()
             self.handle_messages()
+            self.create_client()
+            self.kill_non_active_clients()
             time.sleep(Constants.SERVER_CYCLE_WAIT)
         self.print_results()

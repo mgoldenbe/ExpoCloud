@@ -1,4 +1,6 @@
 class Constants:
+    CLIENT_MAX_NON_ACTIVE_TIME = 10 # If no handshake, kill the instance
+
     SERVER_CYCLE_WAIT = 0.1
     CLIENT_CYCLE_WAIT = 0.1
     CLIENT_WAIT_AFTER_SENDING_BYE = 5

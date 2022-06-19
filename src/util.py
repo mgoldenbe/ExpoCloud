@@ -7,6 +7,7 @@ except:
 import sys
 import time
 import socket
+from pathlib import Path
 from multiprocessing.managers import SyncManager
 from typing import Tuple
 
@@ -36,7 +37,11 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
     else:
         print(descr, file=sys.stderr, flush=True)
     if exit_flag: exit(1)
-    
+
+# Adapted from https://stackoverflow.com/a/53465812/2725810
+def get_project_root() -> Path:
+    return Path(__file__).parent.parent
+
 def my_ip():
     return socket.gethostbyname(socket.gethostname())
 

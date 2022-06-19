@@ -1,5 +1,8 @@
 examples/samd/legacy
 output
+out
+err
+temp
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
