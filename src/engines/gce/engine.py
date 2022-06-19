@@ -25,7 +25,7 @@ class GCE(AbstractEngine):
         GCE does not allow more than one instance creation based on a machine image in 10 minutes.
         """
         return 600
-        
+
     def create_instance(self, prefix, image):
         """
         Creates a new instance based on the image with the given name. If successful, returns the name and internal ip of the new instance, which is formed from the `prefix` and the current timestamp. Otherwise, returns `None`.
@@ -46,7 +46,6 @@ class GCE(AbstractEngine):
             project=self.project, zone=self.zone, body=instance_body)
         try:
             result = request.execute()
-            print(result, flush=True)
             return instance_name, self.ip_from_name_(instance_name)
         except Exception as e:
             handle_exception(e, "Could not create instance", False)
@@ -83,7 +82,6 @@ class GCE(AbstractEngine):
         try:
             while True: # wait till the instance is created
                 response = request.execute()
-                print(response['status'], flush=True)
                 if response['status'] == 'RUNNING':
                     break
                 time.sleep(5)

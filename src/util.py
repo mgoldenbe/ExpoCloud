@@ -4,12 +4,14 @@ try:
 except:
     pass
 
+import subprocess
 import sys
 import time
 import socket
 from pathlib import Path
-from multiprocessing.managers import SyncManager
 from typing import Tuple
+
+from src.constants import Constants
 
 class MessageType:
     # to server
@@ -44,6 +46,24 @@ def get_project_root() -> Path:
 
 def my_ip():
     return socket.gethostbyname(socket.gethostname())
+
+def remote_execute(ip, command):
+    key = '~/.ssh/id_rsa'
+    ssh_command = \
+            f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\""
+    
+    attempts_left = 3
+    while attempts_left:
+        try:
+            status = subprocess.check_output(ssh_command, shell=True)
+            return
+        except Exception as e:
+            attempts_left -= 1
+            time.sleep(Constants.SSH_RETRY_DELAY)
+
+    print(f"Failed to execute command remotely at {ip}", 
+          file = sys.stderr, flush = True)
+    return None
 
 def all_lt(t1, t2):
     """
@@ -89,19 +109,3 @@ def print_event(descr, worker=None, task = None):
     
 def event_to_server(to_server_q, descr, worker=None, task = None):
     output_event(to_server_q, descr, worker, task)
-
-# https://cloud.google.com/compute/docs/reference/rest/v1/instances/stop
-# Remember to give access to all APIs in the instance configuration
-def stop_instance():
-    try:
-        credentials = GoogleCredentials.get_application_default()
-        service = discovery.build('compute', 'v1', credentials=credentials)
-
-        project = 'iucc-novel-heuristic'  # TODO: Update placeholder value.
-        zone = 'us-central1-a'  # TODO: Update placeholder value.
-        instance = 'test-00'  # TODO: Update placeholder value.
-
-        request = service.instances().stop(project=project, zone=zone, instance=instance)
-        request.execute()
-    except:
-        pass

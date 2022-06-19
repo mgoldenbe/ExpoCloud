@@ -1,5 +1,9 @@
 class Constants:
-    CLIENT_MAX_NON_ACTIVE_TIME = 10 # If no handshake, kill the instance
+    """
+    The constants used throughout the framework. All times are in seconds.
+    """
+    CLIENT_MAX_NON_ACTIVE_TIME = 300 # If no handshake, kill the instance
+    SSH_RETRY_DELAY = 5 # If ssh fails, try again after this delay
 
     SERVER_CYCLE_WAIT = 0.1
     CLIENT_CYCLE_WAIT = 0.1

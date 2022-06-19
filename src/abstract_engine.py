@@ -1,7 +1,6 @@
-import subprocess
 import time
 
-from src.util import handle_exception, my_ip
+from src.util import handle_exception, my_ip, remote_execute
 
 class InstanceType:
     CLIENT = 'client'
@@ -51,8 +50,6 @@ class AbstractEngine:
                 InstanceType.CLIENT: 
                     f"{self.project_folder}.run_client {my_ip()}"
             }[type]
-            print(result, flush=True)
-            print(command, flush=True)
             self.run_instance_(ip, command)
             return result
         except Exception as e:
@@ -77,10 +74,5 @@ class AbstractEngine:
         return result
     
     def run_instance_(self, ip, python_arg):
-        key = '~/.ssh/id_rsa'
         command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
-        ssh_command = \
-            f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\""
-        print(ssh_command, flush=True)
-        status = subprocess.check_output(ssh_command, shell=True)
-        print(f"Result of ssh: {status}", flush=True)
+        remote_execute(ip, command)

@@ -39,13 +39,17 @@ def get_handshake_manager():
 class Client():
     def __init__(self, engine):
         self.engine = engine
+        self.my_tasks = [] # ids of tasks held by the client
         self.active_timestamp = None
         self.name, self.ip = None, None
         result = engine.run_instance(InstanceType.CLIENT)
-        self.name, self.ip = result
+        if result:
+            self.name, self.ip = result
+            print(f"New client at {self.ip}", flush = True)
         self.creation_timestamp = time.time()
     
     def __del__(self):
+        print(f"Client at {self.ip} is dying", flush = True)
         if self.active_timestamp:
             self.events_file.close()
             self.exceptions_file.close()
@@ -60,6 +64,17 @@ class Client():
         os.makedirs(path, exist_ok=True)
         self.events_file = open(os.path.join(path, 'events.txt'), "w")
         self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "w")
+
+    def register_tasks(self, tasks):
+        self.my_tasks += [t.id for t in tasks]
+    
+    def unregister_task(self, t_id):
+        self.my_tasks = list(filter(lambda i: i != t_id, self.my_tasks))
+
+    def unregister_domino(self, tasks, hardness):
+        hard = [t_id for t_id in self.my_tasks 
+                if tasks[t_id].hardness >= hardness]
+        self.my_tasks = list(filter(lambda i: i in hard, self.my_tasks))
 
 class Cluster():
     """
@@ -128,6 +143,7 @@ class Cluster():
         if tasks:
             try:
                 client.to_client_q.put((MessageType.GRANT_TASKS, tasks))
+                client.register_tasks(tasks)
             except Exception as e:
                 handle_exception(e, "Failed to send tasks")
         if n > 0: client.to_client_q.put((MessageType.NO_FURTHER_TASKS, None))
@@ -140,6 +156,7 @@ class Cluster():
 
     def process_result(self, client, body):
         id, result = body
+        client.unregister_task(id)
         task = self.tasks[id]
         task.result = result
         group = task.group_parameters()
@@ -157,10 +174,11 @@ class Cluster():
         self.min_hard.append(hardness)
         
         for c in self.clients:
+            c.unregister_domino(self.tasks, hardness)
             c.to_client_q.put((MessageType.APPLY_DOMINO_EFFECT, hardness))
 
     def process_bye(self, client, _body):
-        print('Got bye from', client.ip, flush=True)
+        print(f"Got bye from {client.ip}; {len(client.my_tasks)} registered tasks remain", flush=True)
         self.clients = \
             list(filter(lambda c: c.ip != client.ip, self.clients))
 
