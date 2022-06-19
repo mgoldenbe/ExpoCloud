@@ -1,5 +1,5 @@
 from src.engines.local import LocalEngine
-from src.engines.gce.engine import GCE
+#from src.engines.gce.engine import GCE
 from src.server import Cluster
 from examples.samd.instance import generate_instances
 from examples.samd.task import Task
@@ -25,6 +25,6 @@ config = {
     'root_folder': '~/ExpoCloud',
     'project_folder': 'examples.samd'
 }
-engine = GCE(config)
-#engine=LocalEngine('examples.samd')
+#engine = GCE(config)
+engine=LocalEngine('examples.samd')
 Cluster(tasks, engine, min_group_size=20).run()

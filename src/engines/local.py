@@ -1,6 +1,7 @@
 import subprocess
 from sys import stderr
 from src import util
+from src.abstract_engine import InstanceType
 
 class LocalEngine:
     """
@@ -12,31 +13,26 @@ class LocalEngine:
         """
         self.root_folder = util.get_project_root()
         self.project_folder = project_folder
+        self.client_running = False
 
     def can_create_instance(self):
         """
-        Needed for compatibility.
+        Return True only if the client has not been run.
         """
-        return True
-
-    def run_server(self):
-        try:
-            name, ip = 'localhost', util.my_ip()
-            self.run_instance_(f"{self.project_folder}.run_server")
-            return name, ip
-        except:
-            return None, None
+        return not self.client_running
     
-    def run_client(self):
+    def run_instance(self, type):
+        if type != InstanceType.CLIENT: return None
         try:
             name, ip = 'localhost', util.my_ip()
             self.run_instance_(
                 f"{self.project_folder}.run_client \"{util.my_ip()}\"")
+            self.client_running = True
             return name, ip
         except Exception as e:
             print(f"Exception running client\n{str(e)}", 
                   file=stderr, flush=True)
-            return None, None
+            return None
     
     def kill_instance(self, name_):
         pass
