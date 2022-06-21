@@ -15,7 +15,7 @@ class LocalEngine:
         self.project_folder = project_folder
         self.client_running = False
 
-    def can_create_instance(self):
+    def creation_attempt_allowed(self):
         """
         Return True only if the client has not been run.
         """
@@ -30,8 +30,7 @@ class LocalEngine:
             self.client_running = True
             return name, ip
         except Exception as e:
-            print(f"Exception running client\n{str(e)}", 
-                  file=stderr, flush=True)
+            util.handle_exception(e, f"Exception running new client", False)
             return None
     
     def kill_instance(self, name_):

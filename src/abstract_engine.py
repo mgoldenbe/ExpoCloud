@@ -1,6 +1,9 @@
+from ast import Constant
 import time
+import sys
 
 from src.util import handle_exception, my_ip, remote_execute
+from src.constants import Constants
 
 class InstanceType:
     CLIENT = 'client'
@@ -29,12 +32,18 @@ class AbstractEngine:
         self.client_image = config['client_image']
         self.root_folder = config['root_folder']
         self.project_folder = config['project_folder']
-        self.last_creation_timestamp = 0 # last created instance
+        self.last_creation_timestamp = 0
 
-    def can_create_instance(self):
+        # No more instances till this passes;
+        # halved, because doubling after the first failure.
+        self.creation_delay = Constants.MIN_CREATION_DELAY / 2 
+
+    def creation_attempt_allowed(self):
+        """
+        Makes sure that instance creation attempts are performed with exponentially increasing delays.
+        """
         return \
-            time.time() - self.last_creation_timestamp >= \
-            self.creation_frequency_limit()
+            time.time() - self.last_creation_timestamp >= self.creation_delay
 
     def run_instance(self, type):
         """
@@ -42,7 +51,12 @@ class AbstractEngine:
         """
         try:
             result = self.create_instance_(type)
-            if not result: return None
+            if not result:
+                self.creation_delay *= 2
+                print(f"Next creation attempt in {self.creation_delay} seconds",
+                      file=sys.stderr, flush=True)
+                return None
+            print(f"Created instance {result}", file=sys.stderr, flush=True)
             _, ip = result
             command = {
                 InstanceType.SERVER: 
@@ -51,10 +65,10 @@ class AbstractEngine:
                     f"{self.project_folder}.run_client {my_ip()}"
             }[type]
             self.run_instance_(ip, command)
+            self.creation_delay = Constants.MIN_CREATION_DELAY
             return result
         except Exception as e:
-            handle_exception(e, "Exception in the abstract engine's run_instance method", False)
-            return None
+            handle_exception(e, "Exception in the abstract engine's run_instance method", True) # Stop, should never happen
 
     # Private methods 
     def create_instance_(self, type):
@@ -69,8 +83,7 @@ class AbstractEngine:
         }[type]
         result = \
             self.create_instance(name, image)
-        if result:
-            self.last_creation_timestamp = time.time()
+        self.last_creation_timestamp = time.time()
         return result
     
     def run_instance_(self, ip, python_arg):

@@ -37,25 +37,62 @@ def get_handshake_manager():
     return manager
 
 class Client():
-    def __init__(self, engine):
+    def __init__(self, engine, tasks_from_failed):
+        """
+        Objects of this class represent clients. 
+        `engine` - an instance of either AbstractEngine's subclass or LocalEngine.
+        `tasks_from_failed` - the list to which the tasks assigned to this client are to be appended should this client fail.
+        """
         self.engine = engine
+        self.tasks_from_failed = tasks_from_failed
         self.my_tasks = [] # ids of tasks held by the client
-        self.active_timestamp = None
+        self.active_timestamp = None # last health update, None until handshake
         self.name, self.ip = None, None
         result = engine.run_instance(InstanceType.CLIENT)
         if result:
             self.name, self.ip = result
             print(f"New client at {self.ip}", flush = True)
+        else:
+            print(f"Creation of new client failed", file=sys.stderr, flush=True)
         self.creation_timestamp = time.time()
     
     def __del__(self):
-        print(f"Client at {self.ip} is dying", flush = True)
+        print(f"The client {self.name} at {self.ip} is dying", 
+              file=sys.stderr, flush=True)
         if self.active_timestamp:
             self.events_file.close()
             self.exceptions_file.close()
         if self.name:
             self.engine.kill_instance(self.name)
+        self.tasks_from_failed += self.my_tasks
     
+    def is_healthy(self, tasks_remain: bool):
+        """
+        Returns true if the client is healthy.
+        A client is healthy if either:
+        - It is not active, but has an ip address, and there are still tasks remaining as indicated by the `tasks_remain` argument CLIENT_MAX_NON_ACTIVE_TIME has not passed since its creation.
+        - It is active and HEALTH_UPDATE_LIMIT has not passed since last health 
+          update.
+        """
+        if (not self.active_timestamp) and self.ip and tasks_remain:
+            if time.time() - self.creation_timestamp <= \
+               Constants.CLIENT_MAX_NON_ACTIVE_TIME: return True
+
+        if self.active_timestamp:
+            if time.time() - self.active_timestamp <= \
+               Constants.HEALTH_UPDATE_LIMIT: return True
+
+        if self.active_timestamp or tasks_remain:
+            print(f"The client {self.name} at {self.ip} is unhealthy", 
+                  file=sys.stderr, flush=True)
+            print(f"Created {self.creation_timestamp}",
+                  f"last healthy {self.active_timestamp}", 
+                  file=sys.stderr, flush=True)
+        else:
+            print(f"Inactive client {self.name} at {self.ip} remains", 
+                  file=sys.stderr, flush=True)
+        return False
+
     def shake_hands(self, port: int, parent_dir: str):
         self.active_timestamp = time.time()
         self.port = port
@@ -74,7 +111,7 @@ class Client():
     def unregister_domino(self, tasks, hardness):
         hard = [t_id for t_id in self.my_tasks 
                 if tasks[t_id].hardness >= hardness]
-        self.my_tasks = list(filter(lambda i: i in hard, self.my_tasks))
+        self.my_tasks = list(filter(lambda i: i not in hard, self.my_tasks))
 
 class Cluster():
     """
@@ -95,6 +132,7 @@ class Cluster():
             t.orig_id = i
         self.tasks = sorted(tasks, key = lambda t: t.hardness)
         self.next_task = 0 # next task to be given to clients
+        self.tasks_from_failed = [] # tasks from failed clients to reassign
         self.min_hard = [] # hardness for each minimally hard task
         self.group_counts = {} # number of done tasks for each group
         self.min_group_size = min_group_size
@@ -120,6 +158,9 @@ class Cluster():
             if hardness >= h: return True
         return False
 
+    def process_health_update(self, client, _body):
+        client.active_timestamp = time.time()
+
     def accept_handshakes(self):
         while not self.handshake_q.empty():
             client_ip, client_port = self.handshake_q.get_nowait()
@@ -131,22 +172,50 @@ class Cluster():
                     exit_flag=False)
                 continue
             client.shake_hands(client_port, self.output_folder)
-        
+
+    def message_to_client(self, client, type, body):
+        try:
+            client.to_client_q.put((type, body))
+        except Exception as e:
+            handle_exception(
+                e, f"Message {type} failed to client at {client.ip}", False)
+            self.kill_client(client)
+    
+    def client_messages(self, client):
+        try:
+            return not client.to_server_q.empty()
+        except Exception as e:
+            handle_exception(
+                e, f"Message check from client at {client.ip} failed", False)
+            self.kill_client(client)
+
+    def tasks_remain(self):
+        """
+        Return True if tasks to execute remain.
+        """
+        return self.tasks_from_failed or self.next_task < len(self.tasks)
+
     def process_request_tasks(self, client: Client, n: int):
         tasks = []
-        while n > 0 and self.next_task < len(self.tasks):
+        while n > 0 and self.tasks_remain():
             task = self.tasks[self.next_task]
-            self.next_task += 1
-            if self.is_hard(task.hardness): continue
+            if self.tasks_from_failed:
+                task = self.tasks[self.tasks_from_failed.pop(0)]
+            else:
+                self.next_task += 1
+            if self.is_hard(task.hardness):
+                print(f"Skipping hard task {task.id}", flush=True)
+                continue
             tasks.append(task)
             n -= 1
         if tasks:
             try:
-                client.to_client_q.put((MessageType.GRANT_TASKS, tasks))
                 client.register_tasks(tasks)
+                self.message_to_client(client, MessageType.GRANT_TASKS, tasks)
             except Exception as e:
                 handle_exception(e, "Failed to send tasks")
-        if n > 0: client.to_client_q.put((MessageType.NO_FURTHER_TASKS, None))
+        if n > 0:
+            self.message_to_client(client, MessageType.NO_FURTHER_TASKS, None)
 
     def process_log(self, client, descr):
         print(descr, file=client.events_file, flush=True)
@@ -156,6 +225,8 @@ class Cluster():
 
     def process_result(self, client, body):
         id, result = body
+        print(f"Client at {client.ip} - result for task {id}", 
+              flush=True)
         client.unregister_task(id)
         task = self.tasks[id]
         task.result = result
@@ -175,19 +246,23 @@ class Cluster():
         
         for c in self.clients:
             c.unregister_domino(self.tasks, hardness)
-            c.to_client_q.put((MessageType.APPLY_DOMINO_EFFECT, hardness))
+            self.message_to_client(c, MessageType.APPLY_DOMINO_EFFECT, hardness)
+
+    def kill_client(self, client):
+        self.clients = \
+            list(filter(lambda c: c.ip != client.ip, self.clients))
 
     def process_bye(self, client, _body):
         print(f"Got bye from {client.ip}; {len(client.my_tasks)} registered tasks remain", flush=True)
-        self.clients = \
-            list(filter(lambda c: c.ip != client.ip, self.clients))
+        self.kill_client(client)
 
     def handle_messages(self):
         for c in self.clients:
             if not c.active_timestamp: continue
-            while not c.to_server_q.empty():
+            while self.client_messages(c):
                 type, body = c.to_server_q.get_nowait()
-                {MessageType.REQUEST_TASKS: self.process_request_tasks,
+                {MessageType.HEALTH_UPDATE: self.process_health_update,
+                 MessageType.REQUEST_TASKS: self.process_request_tasks,
                  MessageType.LOG: self.process_log,
                  MessageType.EXCEPTION: self.process_exception,
                  MessageType.RESULT: self.process_result,
@@ -209,22 +284,20 @@ class Cluster():
                       file = self.results_file)
 
     def create_client(self):
-        if self.engine.can_create_instance():
-            self.clients.append(Client(self.engine))
+        if self.engine.creation_attempt_allowed():
+            self.clients.append(Client(self.engine, self.tasks_from_failed))
 
-    def kill_non_active_clients(self):
-        overdue = lambda c: time.time() - c.creation_timestamp > \
-                            Constants.CLIENT_MAX_NON_ACTIVE_TIME
+    def kill_unhealthy_clients(self):
+        tasks_remain = self.tasks_remain()
         self.clients = \
-            list(filter(lambda c: c.active_timestamp or not overdue(c), 
-                        self.clients))
+            list(filter(lambda c: c.is_healthy(tasks_remain), self.clients))
 
     def run(self):
         print(f"Got {len(self.tasks)} tasks and ready for clients", flush=True)
-        while self.next_task < len(self.tasks) or self.clients:
+        while self.tasks_remain() or self.clients:
             self.accept_handshakes()
             self.handle_messages()
             self.create_client()
-            self.kill_non_active_clients()
+            self.kill_unhealthy_clients()
             time.sleep(Constants.SERVER_CYCLE_WAIT)
         self.print_results()

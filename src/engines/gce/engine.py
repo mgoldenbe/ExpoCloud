@@ -2,6 +2,7 @@
 
 from pprint import pprint
 from sys import stderr
+
 from src.abstract_engine import AbstractEngine
 from src.util import handle_exception
 
@@ -45,11 +46,15 @@ class GCE(AbstractEngine):
         request = service.instances().insert(
             project=self.project, zone=self.zone, body=instance_body)
         try:
-            result = request.execute()
-            return instance_name, self.ip_from_name_(instance_name)
+            request.execute()
         except Exception as e:
             handle_exception(e, "Could not create instance", False)
             return None
+        ip = self.ip_from_name_(instance_name)
+        if not ip:
+            self.kill_instance(instance_name)
+            return None
+        return instance_name, ip
 
     # https://cloud.google.com/compute/docs/reference/rest/beta/instances/delete
     def kill_instance(self, name):
@@ -82,11 +87,15 @@ class GCE(AbstractEngine):
         try:
             while True: # wait till the instance is created
                 response = request.execute()
-                if response['status'] == 'RUNNING':
-                    break
+                if response['status'] == 'RUNNING': break
+                if response['status'] == 'STOPPING':
+                    print("It looks like this creation attempt was too early", 
+                          file = stderr, flush=True)
+                    return None
                 time.sleep(5)
             return response['networkInterfaces'][0]['networkIP']
         except Exception as e:
-            handle_exception(e, "Could not get ip of instance", False)
+            # should not happen
+            handle_exception(e, "Could not get ip of instance", True) 
             return None
 

@@ -97,7 +97,14 @@ class Client:
         self.to_server_q, self.to_client_q = \
             self.manager.to_server_q(), self.manager.to_client_q()
         handshake()
+        self.last_health_update = time.time()
 
+    def health_update(self):
+        if time.time() - self.last_health_update < \
+           Constants.HEALTH_UPDATE_FREQUENCY: return
+        self.to_server_q.put((MessageType.HEALTH_UPDATE, None))
+        self.last_health_update = time.time()
+        
     def process_grant_tasks(self, tasks):
         self.n_requested -= len(tasks)
         self.tasks += tasks
@@ -179,7 +186,9 @@ class Client:
             worker.start()
 
     def run(self):
+        print("Starting...", file=sys.stderr, flush=True)
         while self.tasks or not self.no_further_tasks:
+            self.health_update()
             self.process_workers()
             if not self.no_further_tasks:
                 n_tasks_in_pipeline = \
@@ -190,6 +199,7 @@ class Client:
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
 
         while self.workers:
+            self.health_update()
             self.process_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
                 

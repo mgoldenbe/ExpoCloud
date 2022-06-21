@@ -15,6 +15,7 @@ from src.constants import Constants
 
 class MessageType:
     # to server
+    HEALTH_UPDATE = 'HEALTH_UPDATE'
     REQUEST_TASKS = 'REQUEST_TASKS'
     RESULT = 'RESULT'
     REPORT_HARD_TASK = 'REPORT_HARD_TASK'
@@ -33,7 +34,8 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
     """
     Print the custom error message and the exception and exit unless exit_flag==False.
     """
-    descr = msg + "\n" + str(e)
+    descr = msg
+    if str(e): descr += "\n" + str(e)
     if to_server_q:
         to_server_q.put((MessageType.EXCEPTION, descr))
     else:
