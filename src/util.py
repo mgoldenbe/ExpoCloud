@@ -12,32 +12,95 @@ from pathlib import Path
 from typing import Tuple
 
 from src.constants import Constants
+from multiprocessing import Queue
+from multiprocessing.managers import SyncManager
+
+class InstanceRole:
+    PRIMARY_SERVER = 'PRIMARY_SERVER'
+    BACKUP_SERVER = 'BACKUP_SERVER'
+    CLIENT = 'CLIENT'
 
 class MessageType:
-    # to server
     HEALTH_UPDATE = 'HEALTH_UPDATE'
+    
+    # to server
     REQUEST_TASKS = 'REQUEST_TASKS'
+    STARTED = 'STARTED'
     RESULT = 'RESULT'
     REPORT_HARD_TASK = 'REPORT_HARD_TASK'
     LOG = 'LOG'
     EXCEPTION = 'EXCEPTION'
     BYE = 'BYE'
 
+    # from primary to backup server
+    NEW_CLIENT = 'NEW_CLIENT'
+    CLIENT_FAILURE = 'CLIENT_FAILURE'
+    MESSAGE_FROM_CLIENT = 'MESSAGE_FROM_CLIENT'
+
     # to client
     GRANT_TASKS = 'GRANT_TASKS'
     APPLY_DOMINO_EFFECT = 'APPLY_DOMINO_EFFECT'
     NO_FURTHER_TASKS = 'NO_FURTHER_TASKS'
+    STOP = 'STOP'
+    RESUME = 'RESUME'
+    SWAP_QUEUES = 'SWAP_QUEUES'
+
+    # from worker
+    WORKER_STARTED = 'STARTED'
+    WORKER_DONE = 'DONE'
+
+def get_guest_qs(ip, port, q_names):
+    """
+    Get queues owned by another instance. The caller should handle the exceptions.
+    """
+    class MyManager(SyncManager):
+        pass
     
+    for q_name in q_names: MyManager.register(q_name)
+
+    auth = b'myauth'
+    manager = MyManager(address=(ip, port), authkey=auth)
+    manager.connect()
+    return tuple(getattr(manager, q_name)() for q_name in q_names)
+
+def make_manager(q_names, port):
+    class MyManager(SyncManager):
+        pass
+    for q_name in q_names:
+        q = Queue()
+        MyManager.register(q_name, callable=lambda q=q: q)
+
+    auth = b'myauth'
+    try:
+        manager = MyManager(address=('', port), authkey=auth)
+        manager.start()
+    except Exception as e:
+        handle_exception(e, 'Could not start manager')
+
+    return manager
+
+def handshake(my_role):
+    try:
+        server_ip = sys.argv[1]
+    except Exception as e:
+        handle_exception(e, f"Wrong command-line arguments {sys.argv}")
+
+    try:
+        handshake_q, = get_guest_qs(
+            server_ip, Constants.SERVER_PORT, ['handshake_q'])
+        handshake_q.put((my_role, my_ip()))
+    except Exception as e:
+        handle_exception(e, 'Handshake with the server failed')
 
 def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
-                     to_server_q = None):
+                     to_primary_q = None):
     """
     Print the custom error message and the exception and exit unless exit_flag==False.
     """
     descr = msg
     if str(e): descr += "\n" + str(e)
-    if to_server_q:
-        to_server_q.put((MessageType.EXCEPTION, descr))
+    if to_primary_q:
+        to_primary_q.put((MessageType.EXCEPTION, descr))
     else:
         print(descr, file=sys.stderr, flush=True)
     if exit_flag: exit(1)
@@ -49,16 +112,23 @@ def get_project_root() -> Path:
 def my_ip():
     return socket.gethostbyname(socket.gethostname())
 
-def remote_execute(ip, command):
+def remote(ip, command_or_folder, type):
     key = '~/.ssh/id_rsa'
-    ssh_command = \
-            f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\""
+    if type == 'execute':
+        command = command_or_folder
+        ssh_command = \
+                f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\""
+    else:
+        assert(type == 'copy')
+        folder = command_or_folder
+        ssh_command = \
+                f"ssh -i {key} -o StrictHostKeyChecking=no -r {folder} {ip}:{folder}"
     
     attempts_left = 3
     while attempts_left:
         try:
             status = subprocess.check_output(ssh_command, shell=True)
-            return
+            return 0
         except Exception as e:
             attempts_left -= 1
             time.sleep(Constants.SSH_RETRY_DELAY)
@@ -66,6 +136,31 @@ def remote_execute(ip, command):
     print(f"Failed to execute command remotely at {ip}", 
           file = sys.stderr, flush = True)
     return None
+
+def remote_execute(ip, command):
+    return remote(ip, command, 'execute')
+
+def remote_replace(ip, folder):
+    remote_execute(ip, f"rm -rf {folder}")
+    return remote(ip, folder, 'copy')
+
+def filter_indices(arr, cond):
+    """
+    Filter elements of arr, so only indices satisfying the predicate `cond` remain.
+    """
+    return [el[1]  for el in filter(lambda el: cond(el[0]), enumerate(arr))]
+
+def list2str(assignment, sep = ';'):
+    """
+    Convert list to str using `sep` as separator
+    """
+    return sep.join([str(a) for a in assignment])
+
+def set2str(s, sep = ';'):
+    """
+    Convert set to string using `sep` as separator. The elements are sorted.
+    """
+    return list2str(sorted(list(s)), sep)
 
 def all_lt(t1, t2):
     """
@@ -91,23 +186,3 @@ def tuple_to_csv(t):
     Return comma-separated values based on tuple.
     """
     return ",".join([str(el) for el in t])
-
-global_begin = time.time()
-
-def output_event(to_server_q, descr, worker, task):
-    """
-    This function should not be invoked directly. Rather, use either `print_event` or `event_to_server`.
-    """
-    worker_id = worker.id if worker else None
-    task = task if task else worker.task
-    descr = f"{round(time.time()-global_begin, 2)},{descr},{worker_id},{task.id},"  + tuple_to_csv(task.parameters())
-    if to_server_q:
-        to_server_q.put((MessageType.LOG, descr))
-    else:
-        print(descr, file=sys.stderr, flush=True)
-
-def print_event(descr, worker=None, task = None):
-    output_event(None, descr, worker, task)
-    
-def event_to_server(to_server_q, descr, worker=None, task = None):
-    output_event(to_server_q, descr, worker, task)

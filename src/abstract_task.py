@@ -63,7 +63,7 @@ class AbstractTask:
 
     def parameters(self):
         """
-        Returns the tuple of parameters. These parameters are used by the cluster:
+        Returns the tuple of parameters. These parameters are used by the server:
         1. To determine the instance number for each parameter setting.
         2. To provide formatted output.
         Global id and id per parameter setting are included by default and should not appear here.

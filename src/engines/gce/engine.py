@@ -27,7 +27,7 @@ class GCE(AbstractEngine):
         """
         return 600
 
-    def create_instance(self, prefix, image):
+    def create_instance_raw(self, name, image):
         """
         Creates a new instance based on the image with the given name. If successful, returns the name and internal ip of the new instance, which is formed from the `prefix` and the current timestamp. Otherwise, returns `None`.
         """
@@ -35,10 +35,8 @@ class GCE(AbstractEngine):
 
         service = discovery.build('compute', 'beta', credentials=credentials)
 
-        instance_name = f"{prefix}-{round(time.time())}"
-
         instance_body = {
-            "name": instance_name,
+            "name": name,
             "sourceMachineImage": 
                 f"projects/{self.project}/global/machineImages/{image}",
         }
@@ -50,11 +48,11 @@ class GCE(AbstractEngine):
         except Exception as e:
             handle_exception(e, "Could not create instance", False)
             return None
-        ip = self.ip_from_name_(instance_name)
+        ip = self.ip_from_name_(name)
         if not ip:
-            self.kill_instance(instance_name)
+            self.kill_instance(name)
             return None
-        return instance_name, ip
+        return ip
 
     # https://cloud.google.com/compute/docs/reference/rest/beta/instances/delete
     def kill_instance(self, name):

@@ -1,7 +1,7 @@
 import subprocess
 from sys import stderr
 from src import util
-from src.abstract_engine import InstanceType
+from src.util import InstanceRole
 
 class LocalEngine:
     """
@@ -21,8 +21,17 @@ class LocalEngine:
         """
         return not self.client_running
     
-    def run_instance(self, type):
-        if type != InstanceType.CLIENT: return None
+    # For compatibility
+    def next_instance_name(self, type):
+        return None
+
+    # For compatibility
+    def create_instance(self, _name, _role):
+        if self.creation_attempt_allowed(): return util.my_ip()
+        return None
+
+    def run_instance(self, _ip, role):
+        if role != InstanceRole.CLIENT: return None
         try:
             name, ip = 'localhost', util.my_ip()
             self.run_instance_(
@@ -38,4 +47,5 @@ class LocalEngine:
 
     def run_instance_(self, python_arg):
         command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
+        print(command, flush=True)
         subprocess.check_output(command, shell=True)

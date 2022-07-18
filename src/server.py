@@ -1,130 +1,35 @@
 # @ Meir Goldenberg The module is part of the ExpoCloud Framework
 
-from multiprocessing import Queue
-from multiprocessing.managers import SyncManager
-
+import pickle
+from pydoc import cli
 import time
 import os
 import sys
-from src.abstract_engine import InstanceType
+
 from src import util
-from src.util import MessageType, handle_exception
+from src.util import InstanceRole, MessageType, handle_exception
 from src.constants import Constants
+from src.instance import Instance, ClientInstance, BackupServerInstance, PrimaryServerInstance, is_primary, is_backup, is_client
 
-def get_client_queues(ip, port):
-    class MyManager(SyncManager):
-        pass
-    
-    MyManager.register('to_server_q')
-    MyManager.register('to_client_q')
-    auth = b'myauth'
-    manager = MyManager(address=(ip, port), authkey=auth)
-    manager.connect()
-    return manager.to_server_q(), manager.to_client_q()
-
-def get_handshake_manager():
-    handshake_q = Queue()
-    class MyManager(SyncManager):
-        pass
-    MyManager.register('handshake_q', callable=lambda: handshake_q)
-    auth = b'myauth'
-    try:
-        manager = MyManager(address=('', Constants.SERVER_PORT), authkey=auth)
-        manager.start()
-    except Exception as e:
-        util.handle_exception(e, 'Could not start manager')
-
-    return manager
-
-class Client():
-    def __init__(self, engine, tasks_from_failed):
-        """
-        Objects of this class represent clients. 
-        `engine` - an instance of either AbstractEngine's subclass or LocalEngine.
-        `tasks_from_failed` - the list to which the tasks assigned to this client are to be appended should this client fail.
-        """
-        self.engine = engine
-        self.tasks_from_failed = tasks_from_failed
-        self.my_tasks = [] # ids of tasks held by the client
-        self.active_timestamp = None # last health update, None until handshake
-        self.name, self.ip = None, None
-        result = engine.run_instance(InstanceType.CLIENT)
-        if result:
-            self.name, self.ip = result
-            print(f"New client at {self.ip}", flush = True)
-        else:
-            print(f"Creation of new client failed", file=sys.stderr, flush=True)
-        self.creation_timestamp = time.time()
-    
-    def __del__(self):
-        print(f"The client {self.name} at {self.ip} is dying", 
-              file=sys.stderr, flush=True)
-        if self.active_timestamp:
-            self.events_file.close()
-            self.exceptions_file.close()
-        if self.name:
-            self.engine.kill_instance(self.name)
-        self.tasks_from_failed += self.my_tasks
-    
-    def is_healthy(self, tasks_remain: bool):
-        """
-        Returns true if the client is healthy.
-        A client is healthy if either:
-        - It is not active, but has an ip address, and there are still tasks remaining as indicated by the `tasks_remain` argument CLIENT_MAX_NON_ACTIVE_TIME has not passed since its creation.
-        - It is active and HEALTH_UPDATE_LIMIT has not passed since last health 
-          update.
-        """
-        if (not self.active_timestamp) and self.ip and tasks_remain:
-            if time.time() - self.creation_timestamp <= \
-               Constants.CLIENT_MAX_NON_ACTIVE_TIME: return True
-
-        if self.active_timestamp:
-            if time.time() - self.active_timestamp <= \
-               Constants.HEALTH_UPDATE_LIMIT: return True
-
-        if self.active_timestamp or tasks_remain:
-            print(f"The client {self.name} at {self.ip} is unhealthy", 
-                  file=sys.stderr, flush=True)
-            print(f"Created {self.creation_timestamp}",
-                  f"last healthy {self.active_timestamp}", 
-                  file=sys.stderr, flush=True)
-        else:
-            print(f"Inactive client {self.name} at {self.ip} remains", 
-                  file=sys.stderr, flush=True)
-        return False
-
-    def shake_hands(self, port: int, parent_dir: str):
-        self.active_timestamp = time.time()
-        self.port = port
-        self.to_server_q, self.to_client_q = get_client_queues(self.ip, port)
-        path = os.path.join(parent_dir, self.ip)
-        os.makedirs(path, exist_ok=True)
-        self.events_file = open(os.path.join(path, 'events.txt'), "w")
-        self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "w")
-
-    def register_tasks(self, tasks):
-        self.my_tasks += [t.id for t in tasks]
-    
-    def unregister_task(self, t_id):
-        self.my_tasks = list(filter(lambda i: i != t_id, self.my_tasks))
-
-    def unregister_domino(self, tasks, hardness):
-        hard = [t_id for t_id in self.my_tasks 
-                if tasks[t_id].hardness >= hardness]
-        self.my_tasks = list(filter(lambda i: i not in hard, self.my_tasks))
-
-class Cluster():
+class Server():
     """
-
+    An instance of this class is either a primary or a backup server.
     """
-    def __init__(self, tasks, engine, 
-                 min_group_size = 0, output_folder = 'output'):
+    def __init__(self, tasks, engine, backup, 
+                 min_group_size = 0):
         """
+        Note that this constructor is only ever involked for building the first primary server.
+        `backup` - whether a backup server should be used.
         `min_group_size` - minimal size of group defined by the Task's `group_parameter_titles` method.
         """
+        self.role = InstanceRole.PRIMARY_SERVER
         self.engine = engine
+        self.backup = backup
         self.clients = []
-        self.handshake_manager = get_handshake_manager()
+        self.clients_stopped_timestamp = None
+
+        self.handshake_manager = \
+            util.make_manager(['handshake_q'], Constants.SERVER_PORT)
         self.handshake_q = self.handshake_manager.handshake_q()
 
         # Store original order for results output, then sort by difficulty
@@ -134,21 +39,47 @@ class Cluster():
         self.next_task = 0 # next task to be given to clients
         self.tasks_from_failed = [] # tasks from failed clients to reassign
         self.min_hard = [] # hardness for each minimally hard task
-        self.group_counts = {} # number of done tasks for each group
         self.min_group_size = min_group_size
 
         for i, t in enumerate(self.tasks):
             t.id = i
             t.result = None
         
-        self.output_folder = output_folder
+        self.output_folder = Constants.OUTPUT_FOLDER
         os.makedirs(self.output_folder, exist_ok=True)
         self.results_file = \
             open(os.path.join(self.output_folder, 'results.txt'), "w")
         
+        self.primary_server = None
+        self.backup_server = None
+        self.to_client_id = 1000 # id of the next outbound message to a client
+        
     def __del__(self):
         self.results_file.close()
         self.handshake_manager.shutdown()
+
+    def run(self):
+        if self.is_primary():
+            print(f"Got {len(self.tasks)} tasks and ready for clients", 
+                  flush=True)
+        while self.tasks_remain() or self.clients:
+            self.send_health_update()
+            if self.is_primary(): self.accept_handshakes()
+            self.handle_messages()
+            self.create_instance()
+            self.kill_unhealthy_instances()
+            if self.is_backup(): 
+                self.check_primary_server()
+            time.sleep(Constants.SERVER_CYCLE_WAIT)
+        self.print_results()
+
+#region TASKS
+
+    def tasks_remain(self):
+        """
+        Return True if tasks to execute remain.
+        """
+        return self.tasks_from_failed or self.next_task < len(self.tasks)
 
     def is_hard(self, hardness):
         """
@@ -158,44 +89,265 @@ class Cluster():
             if hardness >= h: return True
         return False
 
-    def process_health_update(self, client, _body):
-        client.active_timestamp = time.time()
+    def print_results(self):
+        """
+        Restore the original order of tasks and print results.
+        """
+        group_counts = {}
+        for t in self.tasks:
+            group = t.group_parameters()
+            if group not in group_counts: group_counts[group] = 0
+            group_counts[group] += 1
+
+        self.tasks.sort(key = lambda t: t.orig_id)
+        print(util.tuple_to_csv(self.tasks[0].parameter_titles() + \
+                                self.tasks[0].result_titles()),
+              file = self.results_file)
+        for t in self.tasks:
+            if not t.result: continue
+            if group_counts[t.group_parameters()] >= self.min_group_size:
+                print(util.tuple_to_csv(t.parameters() + t.result), 
+                      file = self.results_file)
+
+#endregion TASKS
+
+#region ROLES
+
+    def is_primary(self):
+        return self.role == InstanceRole.PRIMARY_SERVER
+
+    def is_backup(self):
+        return self.role == InstanceRole.BACKUP_SERVER
+
+    def assume_backup_role(self):
+        """
+        This method is called after unpickling the primary server object, so as to convert it to a backup server one.
+        """
+        assert(self.is_primary())
+        self.role = InstanceRole.BACKUP_SERVER
+        self.backup_server = None
+
+        self.primary_server = PrimaryServerInstance()
+        util.handshake(self.role)
+
+        self.update_client_connections()
+        for c in self.clients: 
+            c.engine = None
+            c.received_ids = []
+    
+    def assume_primary_role(self):
+        """
+        Assume the role of the primary server. This is called when primary server failure is detected.
+        """
+        assert(self.is_backup())
+        self.role = InstanceRole.PRIMARY_SERVER
+        self.primary_server = None
+        self.backup_server = None
+        for c in self.clients: c.engine = self.engine
+        
+#endregion ROLES
+
+#region INSTANCES
+
+    def handshake_from_client(self, ip):
+        client = self.get_client(ip)
+        if not client:
+            print(f"Unknown client tried to connect from {ip}",
+                    file=sys.stderr, flush=True)
+            return
+        client.shake_hands(self.role, self.output_folder)
+
+        # inform the backup server
+        if self.backup_server:
+            self.message_to_instance(
+                self.backup_server, MessageType.NEW_CLIENT, client.ip)
+    
+    def handshake_from_backup(self, ip):
+        if ip != self.backup_server.ip:
+            print(f"Unknown backup server tried to connect from {ip}",
+                  file=sys.stderr, flush=True)
+            return
+        self.backup_server.shake_hands()
+        self.resume_clients()
 
     def accept_handshakes(self):
         while not self.handshake_q.empty():
-            client_ip, client_port = self.handshake_q.get_nowait()
-            try:
-                client = next(filter(lambda c: c.ip == client_ip, self.clients))
-            except Exception as e:
-                util.handle_exception(
-                    e, f"Unknown client tried to connect from {client_ip}", 
-                    exit_flag=False)
-                continue
-            client.shake_hands(client_port, self.output_folder)
+            role, ip = self.handshake_q.get_nowait()
+            assert(role == InstanceRole.CLIENT or 
+                   role == InstanceRole.BACKUP_SERVER)
+            {InstanceRole.CLIENT: self.handshake_from_client,
+             InstanceRole.BACKUP_SERVER: self.handshake_from_backup} \
+             [role](ip)
 
-    def message_to_client(self, client, type, body):
+    def get_client(self, ip):
         try:
-            client.to_client_q.put((type, body))
-        except Exception as e:
-            handle_exception(
-                e, f"Message {type} failed to client at {client.ip}", False)
-            self.kill_client(client)
+            return next(filter(lambda c: c.ip == ip, self.clients))
+        except:
+            return None
+
+    def kill_client(self, ip):
+        self.clients = \
+            list(filter(lambda c: c.ip != ip, self.clients))
+
+    def kill_instance(self, instance):
+        if is_client(instance):
+            self.kill_client(instance.ip)
+            return
+        if is_backup(instance):
+            self.backup_server = None
+            return
+        assert(False)
+
+    def create_instance(self):
+        # Creating backup server is first priority
+        if self.backup and self.is_primary():
+            if not self.backup_server:
+                self.backup_server = BackupServerInstance(self.engine)
+
+            assert(self.backup_server)
+            if not self.backup_server.ip:
+                self.backup_server.create()
+                if self.backup_server.ip:
+                    # serialize the primary server, i.e. self
+                    temp = self.handshake_manager # to restore
+                    self.handshake_manager = None # not pickable
+                    with open(Constants.PICKLED_SERVER_FILE, 'wb') as f:
+                        pickle.dump(self, f)
+                    self.handshake_manager = temp # restoring
+                    # copy output folder
+                    self.engine.remote_replace(
+                        self.backup_server.ip, 
+                        os.path.join(self.engine.root_folder, 
+                                     self.output_folder))
+                return
+            
+            assert(self.backup_server.ip)
+            if not self.clients_stopped_timestamp:
+                self.stop_clients()
+
+            assert(self.clients_stopped_timestamp)
+            if time.time() - self.clients_stopped_timestamp >= \
+                Constants.CLIENTS_STOP_TIME:
+                self.backup.run()
+        
+        # If no more tasks, don't create another client
+        if not self.tasks_remain: return
+
+        # Make a client if all existing clients have ip
+        if len(self.clients) == 0 or self.clients[-1].ip:
+            print("creating instance object", flush=True)
+            self.clients.append(
+                ClientInstance(self.engine, self.tasks_from_failed))
+        client = self.clients[-1]
+        if not client.ip: client.create()
+        if client.ip: client.run()
+
+    def kill_unhealthy_instances(self):
+        if self.is_backup():
+            if not self.primary_server.is_healthy():
+                self.assume_primary_role()
+                for c in self.clients:
+                    temp = c.outbound_q
+                    c.outbound_q = util.get_guest_qs(
+                        c.ip, Constants.CLIENT_PORT, ['from_primary_q'])
+                    self.message_to_instance(c, MessageType.SWAP_QUEUES, None)
+                    c.outbound_q = temp
+                    
+            return
+        
+        assert(self.is_primary())
+        tasks_remain = self.tasks_remain()
+        for c in self.clients:
+            if c.is_healthy(tasks_remain): continue
+            self.kill_client(c.ip)
+            if self.backup_server:
+                self.message_to_instance(
+                    self.backup_server, MessageType.CLIENT_FAILURE, c.ip)
+        
+        if self.backup_server and \
+           not self.backup_server.is_healthy(tasks_remain):
+            self.backup_server = None
+
+    def stop_clients(self):
+        for c in self.clients:
+            self.message_to_instance(c, MessageType.STOP, None)
+        self.clients_stopped_timestamp = time.time()
     
-    def client_messages(self, client):
+    def resume_clients(self):
+        for c in self.clients:
+            self.message_to_instance(c, MessageType.RESUME, None)
+        self.clients_stopped_timestamp = None
+
+    def update_client_connections(self):
+        for c in self.clients:
+            if not c.active_timestamp: continue
+            c.connect(self.role)
+
+    def send_health_update(self):
+        """
+        Send health update to the other server.
+        """
+        other_server = \
+            self.backup_server if self.is_primary() else self.primary_server
+        if not other_server: return
+        self.message_to_instance(
+            other_server, MessageType.HEALTH_UPDATE, None)
+
+#endregion INSTANCES
+
+#region MESSAGES
+
+    def message_to_instance(self, instance, type, body):
+        print(f"{type} to {instance.role}", flush=True)
         try:
-            return not client.to_server_q.empty()
+            message = (type, body)
+            if is_client(instance):
+                message = (self.to_client_id,) + message
+                self.to_client_id += 1
+            instance.outbound_q.put(message)
         except Exception as e:
             handle_exception(
-                e, f"Message check from client at {client.ip} failed", False)
-            self.kill_client(client)
+                e, f"Message {type} to instance at {instance.ip} failed", False)
+            self.kill_instance(instance)
 
-    def tasks_remain(self):
+    def messages_waiting(self, instance):
         """
-        Return True if tasks to execute remain.
+        Checks whether a message from `instance` can be read.
+        If there is no message in the inbound queue from the `instance`, return False. Otherwise return True, unless it is the backup server, `instance` is a client and there is no stored message id for this client.
         """
-        return self.tasks_from_failed or self.next_task < len(self.tasks)
+        try:
+            if instance.inbound_q.empty(): return False
 
-    def process_request_tasks(self, client: Client, n: int):
+            if self.is_primary(): return True
+
+            assert(self.is_backup())
+            if is_client(instance) and not instance.received_ids: 
+                return False
+            return True
+        except Exception as e:
+            handle_exception(
+                e, f"Message check from {instance.role} at {instance.ip} failed", False)
+            self.kill_instance(instance)
+
+    def forward_message(self, instance, message_id, type, body):
+        """
+        Forward messages from clients except health updates to backup server.
+        """
+        if not self.backup_server: return
+        if instance.role != InstanceRole.CLIENT: return
+        if type == MessageType.HEALTH_UPDATE: return
+        self.message_to_instance(
+            self.backup_server, MessageType.MESSAGE_FROM_CLIENT, 
+            (instance, message_id, type, body))
+
+#endregion MESSAGES
+
+#region PROCESSING MESSAGES
+
+    def process_health_update(self, instance, _body):
+        instance.active_timestamp = time.time()
+
+    def process_request_tasks(self, client: ClientInstance, n: int):
         tasks = []
         while n > 0 and self.tasks_remain():
             task = self.tasks[self.next_task]
@@ -211,11 +363,13 @@ class Cluster():
         if tasks:
             try:
                 client.register_tasks(tasks)
-                self.message_to_client(client, MessageType.GRANT_TASKS, tasks)
+                self.message_to_instance(
+                    client, MessageType.GRANT_TASKS, tasks)
             except Exception as e:
                 handle_exception(e, "Failed to send tasks")
         if n > 0:
-            self.message_to_client(client, MessageType.NO_FURTHER_TASKS, None)
+            self.message_to_instance(
+                client, MessageType.NO_FURTHER_TASKS, None)
 
     def process_log(self, client, descr):
         print(descr, file=client.events_file, flush=True)
@@ -230,9 +384,6 @@ class Cluster():
         client.unregister_task(id)
         task = self.tasks[id]
         task.result = result
-        group = task.group_parameters()
-        if group not in self.group_counts: self.group_counts[group] = 0
-        self.group_counts[group] += 1
             
     def process_report_hard_task(self, _client, task_id):
         """
@@ -246,58 +397,71 @@ class Cluster():
         
         for c in self.clients:
             c.unregister_domino(self.tasks, hardness)
-            self.message_to_client(c, MessageType.APPLY_DOMINO_EFFECT, hardness)
-
-    def kill_client(self, client):
-        self.clients = \
-            list(filter(lambda c: c.ip != client.ip, self.clients))
+            self.message_to_instance(
+                c, MessageType.APPLY_DOMINO_EFFECT, hardness)
 
     def process_bye(self, client, _body):
+        assert(is_client(client))
         print(f"Got bye from {client.ip}; {len(client.my_tasks)} registered tasks remain", flush=True)
-        self.kill_client(client)
+        self.kill_instance(client)
+
+    def process_new_client(self, _instance, ip):
+        assert(self.is_backup())
+        client = ClientInstance(None, self.tasks_from_failed)
+        client.ip = ip
+        client.shake_hands(self.role, self.output_folder)
+        self.clients.append(client)
+
+    def process_client_failure(self, _instance, ip):
+        """
+        Process client failure reported by the primary server.
+        """
+        assert(self.is_backup())
+        self.kill_client(ip)
+
+    def process_message(self, instance, type, body):
+        {
+        MessageType.HEALTH_UPDATE: self.process_health_update,
+        MessageType.REQUEST_TASKS: self.process_request_tasks,
+        MessageType.RESULT: self.process_result,
+        MessageType.REPORT_HARD_TASK: self.process_report_hard_task,
+        MessageType.LOG: self.process_log,
+        MessageType.EXCEPTION: self.process_exception,
+        MessageType.BYE: self.process_bye,
+
+        MessageType.NEW_CLIENT: self.process_new_client,
+        MessageType.CLIENT_FAILURE: self.process_client_failure,
+        } [type](instance, body)
 
     def handle_messages(self):
-        for c in self.clients:
-            if not c.active_timestamp: continue
-            while self.client_messages(c):
-                type, body = c.to_server_q.get_nowait()
-                {MessageType.HEALTH_UPDATE: self.process_health_update,
-                 MessageType.REQUEST_TASKS: self.process_request_tasks,
-                 MessageType.LOG: self.process_log,
-                 MessageType.EXCEPTION: self.process_exception,
-                 MessageType.RESULT: self.process_result,
-                 MessageType.REPORT_HARD_TASK: self.process_report_hard_task,
-                 MessageType.BYE: self.process_bye}[type](c, body)
-
-    def print_results(self):
         """
-        Restore the original order of tasks and print results.
+        Handle messages from instances.
         """
-        self.tasks.sort(key = lambda t: t.orig_id)
-        print(util.tuple_to_csv(self.tasks[0].parameter_titles() + \
-                                self.tasks[0].result_titles()),
-              file = self.results_file)
-        for t in self.tasks:
-            if not t.result: continue
-            if self.group_counts[t.group_parameters()] >= self.min_group_size:
-                print(util.tuple_to_csv(t.parameters() + t.result), 
-                      file = self.results_file)
+        for instance in \
+            self.clients + [self.primary_server, self.backup_server]:
+            if not instance or not instance.active_timestamp: continue
+            while self.messages_waiting(instance):
+                message_id, type, body = instance.inbound_q.get_nowait()
+                print(f"Got {message_id} of type {type} from client. Body: {body}", flush=True)
+                if self.is_primary():
+                    if is_client(instance):
+                        self.forward_message(instance, message_id, type, body)
+                    self.process_message(instance, type, body)
+                    continue
 
-    def create_client(self):
-        if self.engine.creation_attempt_allowed():
-            self.clients.append(Client(self.engine, self.tasks_from_failed))
+                assert(self.is_backup())
+                if is_client(instance): continue
 
-    def kill_unhealthy_clients(self):
-        tasks_remain = self.tasks_remain()
-        self.clients = \
-            list(filter(lambda c: c.is_healthy(tasks_remain), self.clients))
+                assert(is_primary(instance))
+                if type != MessageType.MESSAGE_FROM_CLIENT:
+                    self.process_message(instance, type, body)
+                    continue
+                
+                assert(type == MessageType.MESSAGE_FROM_CLIENT)
+                received_id = instance.received_ids.pop()
+                assert(message_id == received_id)
+                ip, message_type, message_body = body
+                client = self.get_client(ip)
+                self.process_message(client, message_type, message_body)
 
-    def run(self):
-        print(f"Got {len(self.tasks)} tasks and ready for clients", flush=True)
-        while self.tasks_remain() or self.clients:
-            self.accept_handshakes()
-            self.handle_messages()
-            self.create_client()
-            self.kill_unhealthy_clients()
-            time.sleep(Constants.SERVER_CYCLE_WAIT)
-        self.print_results()
+#endregion PROCESSING MESSAGES

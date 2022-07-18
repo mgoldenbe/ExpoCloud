@@ -2,12 +2,8 @@ from ast import Constant
 import time
 import sys
 
-from src.util import handle_exception, my_ip, remote_execute
+from src.util import handle_exception, my_ip, remote_execute, InstanceRole
 from src.constants import Constants
-
-class InstanceType:
-    CLIENT = 'client'
-    SERVER = 'server'
 
 class AbstractEngine:
     """
@@ -45,47 +41,47 @@ class AbstractEngine:
         return \
             time.time() - self.last_creation_timestamp >= self.creation_delay
 
-    def run_instance(self, type):
+    def next_instance_name(self, type):
+        if type == InstanceRole.CLIENT: 
+            return f"{self.prefix}-client-{round(time.time())}"
+        return f"{self.prefix}-server-{round(time.time())}"
+
+    def image_name(self, type):
+        if type == InstanceRole.CLIENT: return self.client_image
+        return self.server_image
+
+    def create_instance(self, name, type):
+        """
+        Create the instance of the given type.
+        """
+        if not self.creation_attempt_allowed(): return None
+
+        ip = self.create_instance_raw(name, self.image_name(type))
+        if not ip:
+            self.creation_delay *= 2
+            print(f"Next creation attempt in {self.creation_delay} seconds",
+                    file=sys.stderr, flush=True)
+            return None
+            
+        print(f"New {type} at {ip}", file=sys.stderr, flush=True)
+        self.last_creation_timestamp = time.time()
+        return ip
+
+    def run_instance(self, ip, type):
         """
         Create and run the instance of the given type.
         """
         try:
-            result = self.create_instance_(type)
-            if not result:
-                self.creation_delay *= 2
-                print(f"Next creation attempt in {self.creation_delay} seconds",
-                      file=sys.stderr, flush=True)
-                return None
-            print(f"Created instance {result}", file=sys.stderr, flush=True)
-            _, ip = result
-            command = {
-                InstanceType.SERVER: 
+            python_arg = {
+                InstanceRole.PRIMARY_SERVER: 
                     f"{self.project_folder}.run_server",
-                InstanceType.CLIENT: 
+                InstanceRole.BACKUP_SERVER: 
+                    f"{self.project_folder}.run_backup_server {my_ip()}",
+                InstanceRole.CLIENT: 
                     f"{self.project_folder}.run_client {my_ip()}"
             }[type]
-            self.run_instance_(ip, command)
+            command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
+            remote_execute(ip, command)
             self.creation_delay = Constants.MIN_CREATION_DELAY
-            return result
         except Exception as e:
             handle_exception(e, "Exception in the abstract engine's run_instance method", True) # Stop, should never happen
-
-    # Private methods 
-    def create_instance_(self, type):
-        """
-        Create the instance of the given type.
-        """
-        name, image = {
-            InstanceType.SERVER: 
-                (f"{self.prefix}-server", self.server_image),
-            InstanceType.CLIENT: 
-                (f"{self.prefix}-client", self.client_image)
-        }[type]
-        result = \
-            self.create_instance(name, image)
-        self.last_creation_timestamp = time.time()
-        return result
-    
-    def run_instance_(self, ip, python_arg):
-        command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
-        remote_execute(ip, command)
