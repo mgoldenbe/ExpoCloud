@@ -9,6 +9,7 @@ import sys
 import time
 import socket
 from pathlib import Path
+import traceback
 from typing import Tuple
 
 from src.constants import Constants
@@ -49,6 +50,19 @@ class MessageType:
     WORKER_STARTED = 'STARTED'
     WORKER_DONE = 'DONE'
 
+# Adapted from https://stackoverflow.com/a/1365284/2725810
+def get_unused_port():
+    with socket.socket() as s:
+        s.bind(('',0))
+        return s.getsockname()[1]
+
+def next_instance_name(role, prefix):
+    first_dash = '-' if prefix else ''
+    if role == InstanceRole.CLIENT: 
+        return f"{prefix}{first_dash}client-{round(time.time())}"
+    assert(role == InstanceRole.BACKUP_SERVER)
+    return f"{prefix}-server-{round(time.time())}"
+
 def get_guest_qs(ip, port, q_names):
     """
     Get queues owned by another instance. The caller should handle the exceptions.
@@ -79,16 +93,17 @@ def make_manager(q_names, port):
 
     return manager
 
-def handshake(my_role):
+def handshake(my_role, my_port):
     try:
         server_ip = sys.argv[1]
+        server_port = int(sys.argv[2])
     except Exception as e:
         handle_exception(e, f"Wrong command-line arguments {sys.argv}")
 
     try:
         handshake_q, = get_guest_qs(
-            server_ip, Constants.SERVER_PORT, ['handshake_q'])
-        handshake_q.put((my_role, my_ip()))
+            server_ip, server_port, ['handshake_q'])
+        handshake_q.put((my_role, my_ip(), my_port))
     except Exception as e:
         handle_exception(e, 'Handshake with the server failed')
 
@@ -98,7 +113,8 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
     Print the custom error message and the exception and exit unless exit_flag==False.
     """
     descr = msg
-    if str(e): descr += "\n" + str(e)
+    e_str = traceback.format_exc()
+    if e_str: descr += "\n" + e_str
     if to_primary_q:
         to_primary_q.put((MessageType.EXCEPTION, descr))
     else:
@@ -117,13 +133,13 @@ def remote(ip, command_or_folder, type):
     if type == 'execute':
         command = command_or_folder
         ssh_command = \
-                f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\""
+                f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\" 2>>ssh_err"
     else:
         assert(type == 'copy')
         folder = command_or_folder
         ssh_command = \
-                f"ssh -i {key} -o StrictHostKeyChecking=no -r {folder} {ip}:{folder}"
-    
+                f"scp -i {key} -o StrictHostKeyChecking=no -r {folder} {ip}:{folder} 2>> ssh_err"
+    print(ssh_command, flush=True)
     attempts_left = 3
     while attempts_left:
         try:

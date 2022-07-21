@@ -1,7 +1,7 @@
 import subprocess
 from sys import stderr
 from src import util
-from src.util import InstanceRole
+from src.util import InstanceRole, next_instance_name
 
 class LocalEngine:
     """
@@ -13,30 +13,21 @@ class LocalEngine:
         """
         self.root_folder = util.get_project_root()
         self.project_folder = project_folder
-        self.client_running = False
-
-    def creation_attempt_allowed(self):
-        """
-        Return True only if the client has not been run.
-        """
-        return not self.client_running
     
     # For compatibility
     def next_instance_name(self, type):
-        return None
+        return next_instance_name(type, "")
 
     # For compatibility
     def create_instance(self, _name, _role):
-        if self.creation_attempt_allowed(): return util.my_ip()
-        return None
+        return util.my_ip()
 
-    def run_instance(self, _ip, role):
+    def run_instance(self, _ip, role, server_port):
         if role != InstanceRole.CLIENT: return None
         try:
             name, ip = 'localhost', util.my_ip()
             self.run_instance_(
-                f"{self.project_folder}.run_client \"{util.my_ip()}\"")
-            self.client_running = True
+                f"{self.project_folder}.run_client \"{util.my_ip()}\" {server_port}")
             return name, ip
         except Exception as e:
             util.handle_exception(e, f"Exception running new client", False)
@@ -47,5 +38,4 @@ class LocalEngine:
 
     def run_instance_(self, python_arg):
         command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
-        print(command, flush=True)
         subprocess.check_output(command, shell=True)

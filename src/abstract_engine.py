@@ -1,8 +1,9 @@
 from ast import Constant
+from ctypes import util
 import time
 import sys
 
-from src.util import handle_exception, my_ip, remote_execute, InstanceRole
+from src.util import handle_exception, my_ip, remote_execute, InstanceRole, next_instance_name
 from src.constants import Constants
 
 class AbstractEngine:
@@ -42,9 +43,7 @@ class AbstractEngine:
             time.time() - self.last_creation_timestamp >= self.creation_delay
 
     def next_instance_name(self, type):
-        if type == InstanceRole.CLIENT: 
-            return f"{self.prefix}-client-{round(time.time())}"
-        return f"{self.prefix}-server-{round(time.time())}"
+        return next_instance_name(type, self.prefix)
 
     def image_name(self, type):
         if type == InstanceRole.CLIENT: return self.client_image
@@ -55,7 +54,8 @@ class AbstractEngine:
         Create the instance of the given type.
         """
         if not self.creation_attempt_allowed(): return None
-
+        print(f"Attempting to create {type} named {name}",
+              file=sys.stderr, flush=True)
         ip = self.create_instance_raw(name, self.image_name(type))
         if not ip:
             self.creation_delay *= 2
@@ -67,18 +67,16 @@ class AbstractEngine:
         self.last_creation_timestamp = time.time()
         return ip
 
-    def run_instance(self, ip, type):
+    def run_instance(self, ip, type, server_port):
         """
         Create and run the instance of the given type.
         """
         try:
             python_arg = {
-                InstanceRole.PRIMARY_SERVER: 
-                    f"{self.project_folder}.run_server",
                 InstanceRole.BACKUP_SERVER: 
-                    f"{self.project_folder}.run_backup_server {my_ip()}",
+                    f"src.run_backup {my_ip()} {server_port}",
                 InstanceRole.CLIENT: 
-                    f"{self.project_folder}.run_client {my_ip()}"
+                    f"{self.project_folder}.run_client {my_ip()} {server_port}"
             }[type]
             command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
             remote_execute(ip, command)

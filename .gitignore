@@ -1,4 +1,4 @@
-examples/samd/legacy
+update.sh
 output
 out
 err

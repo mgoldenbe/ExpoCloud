@@ -4,7 +4,7 @@ import time
 import os
 import sys
 from src import util
-from src.util import InstanceRole
+from src.util import InstanceRole, handle_exception
 from src.constants import Constants
 
 def is_primary(instance):
@@ -26,7 +26,9 @@ class Instance():
         self.role = role
         self.engine = engine
         self.active_timestamp = None # last health update, None until handshake
-        self.name = engine.next_instance_name(role)
+        self.name = None
+        if engine:
+            self.name = engine.next_instance_name(role)
         self.ip = None
     
     def create(self):
@@ -36,13 +38,13 @@ class Instance():
         self.ip = self.engine.create_instance(self.name, self.role)
         if self.ip: self.creation_timestamp = time.time()
 
-    def run(self):
-        self.engine.run_instance(self.ip, self.role)
+    def run(self, server_port):
+        self.engine.run_instance(self.ip, self.role, server_port)
     
     def __del__(self):
-        print(f"The {self.role} {self.name} at {self.ip} is being killed", 
-              file=sys.stderr, flush=True)
         if self.ip and self.engine:
+            print(f"The {self.role} {self.name} at {self.ip} is being killed", 
+                file=sys.stderr, flush=True)
             self.engine.kill_instance(self.name)
     
     def is_healthy(self, tasks_remain: bool):
@@ -107,29 +109,30 @@ class ClientInstance(Instance):
         try:
             if server_role == InstanceRole.PRIMARY_SERVER:
                 self.inbound_q, self.outbound_q = \
-                    util.get_guest_qs(self.ip, Constants.CLIENT_PORT, 
-                        ['to_primary_q', 'from_primary_q'])
+                    util.get_guest_qs(
+                        self.ip, self.port, ['to_primary_q', 'from_primary_q'])
             else:
                 assert(server_role == InstanceRole.BACKUP_SERVER)
                 self.inbound_q, self.outbound_q = \
-                    util.get_guest_qs(self.ip, Constants.CLIENT_PORT, 
-                        ['to_backup_q', 'from_backup_q'])
+                    util.get_guest_qs(
+                        self.ip, self.port, ['to_backup_q', 'from_backup_q'])
         except:
             pass # if the client has died, it will be handled elsewhere
 
     def shake_hands(self, server_role, parent_dir: str):
-        super().shake_hands()
+        print(f"{server_role} attempting to connect to client queues", flush=True)
         self.connect(server_role)
-        path = os.path.join(parent_dir, self.ip)
+        print(f"{server_role} connected to client queues", flush=True)
+        path = os.path.join(parent_dir, self.name)
         os.makedirs(path, exist_ok=True)
         self.events_file = open(os.path.join(path, 'events.txt'), "w")
         self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "w")
+        super().shake_hands()
 
     def register_tasks(self, tasks):
         self.my_tasks += [t.id for t in tasks]
     
     def unregister_task(self, t_id):
-        print(self.my_tasks, t_id)
         self.my_tasks = list(filter(lambda i: i != t_id, self.my_tasks))
 
     def unregister_domino(self, tasks, hardness):
@@ -148,18 +151,25 @@ class BackupServerInstance(Instance):
         super().__init__(InstanceRole.BACKUP_SERVER, engine)
 
     def shake_hands(self):
-        super().shake_hands()
         self.inbound_q, self.outbound_q = \
-            util.get_guest_queues(self.ip, Constants.SERVER_PORT, 
-                ['to_primary_q', 'from_primary_q'])
+            util.get_guest_qs(
+                self.ip, self.port, ['to_primary_q', 'from_primary_q'])
+        super().shake_hands()
 
 class PrimaryServerInstance:
     """
     In backup server, an object of this class represents the primary server. Note that this class does not inherit from `Instance`.
     """
-    def __init__(self):
+    def __init__(self, my_port):
+        self.role = InstanceRole.PRIMARY_SERVER
+
+        try:
+            self.ip = sys.argv[1]
+        except Exception as e:
+            handle_exception(e, f"Wrong command-line arguments {sys.argv}")
+
         self.manager = util.make_manager(
-            ['to_primary_q', 'from_primary_q'], Constants.SERVER_PORT)
+            ['to_primary_q', 'from_primary_q'], my_port)
         self.outbound_q, self.inbound_q = \
             self.manager.to_primary_q(), self.manager.from_primary_q()
         self.active_timestamp = time.time()

@@ -56,9 +56,10 @@ class Client:
         self.no_further_tasks = False # True - no more tasks at the server
         self.capacity = cpu_count()
 
+        self.port = util.get_unused_port()
         self.manager = util.make_manager(
             ['to_primary_q', 'from_primary_q', 
-             'to_backup_q', 'from_backup_q'], Constants.CLIENT_PORT)
+             'to_backup_q', 'from_backup_q'], self.port)
         self.to_primary_q, self.from_primary_q, \
         self.to_backup_q, self.from_backup_q = \
             self.manager.to_primary_q(), \
@@ -67,7 +68,7 @@ class Client:
             self.manager.from_backup_q()
 
         self.message_id = 0 # id of the next message
-        util.handshake(InstanceRole.CLIENT)
+        util.handshake(InstanceRole.CLIENT, self.port)
         self.last_health_update = time.time()
 
         self.stopped_flag = False
