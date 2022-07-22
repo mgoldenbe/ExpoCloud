@@ -1,4 +1,5 @@
 import subprocess
+import time
 from sys import stderr
 from src import util
 from src.util import InstanceRole, next_instance_name
@@ -13,6 +14,8 @@ class LocalEngine:
         """
         self.root_folder = util.get_project_root()
         self.project_folder = project_folder
+        self.last_instance_timestamp = 0
+        self.time_between_instances = 10
     
     # For compatibility
     def next_instance_name(self, type):
@@ -20,18 +23,19 @@ class LocalEngine:
 
     # For compatibility
     def create_instance(self, _name, _role):
+        if time.time() - self.last_instance_timestamp <= \
+           self.time_between_instances: 
+           return None
+        self.last_instance_timestamp = time.time()
         return util.my_ip()
 
-    def run_instance(self, _ip, role, server_port):
+    def run_instance(self, name, _ip, role, server_port, max_cpus = None):
         if role != InstanceRole.CLIENT: return None
         try:
-            name, ip = 'localhost', util.my_ip()
             self.run_instance_(
-                f"{self.project_folder}.run_client \"{util.my_ip()}\" {server_port}")
-            return name, ip
+                f"{self.project_folder}.run_client \"{util.my_ip()}\" {server_port} {name} {max_cpus}")
         except Exception as e:
             util.handle_exception(e, f"Exception running new client", False)
-            return None
     
     def kill_instance(self, name_):
         pass

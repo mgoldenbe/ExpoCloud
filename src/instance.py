@@ -38,12 +38,12 @@ class Instance():
         self.ip = self.engine.create_instance(self.name, self.role)
         if self.ip: self.creation_timestamp = time.time()
 
-    def run(self, server_port):
-        self.engine.run_instance(self.ip, self.role, server_port)
+    def run(self, server_port, max_cpus):
+        self.engine.run_instance(self.name, self.ip, self.role, server_port, max_cpus)
     
     def __del__(self):
         if self.ip and self.engine:
-            print(f"The {self.role} {self.name} at {self.ip} is being killed", 
+            print(f"The {self.role} {self.name} is being killed", 
                 file=sys.stderr, flush=True)
             self.engine.kill_instance(self.name)
     
@@ -68,17 +68,17 @@ class Instance():
                Constants.HEALTH_UPDATE_LIMIT: return True
 
         if self.active_timestamp or (is_client(self) and tasks_remain):
-            print(f"The {self.role} {self.name} at {self.ip} is unhealthy", 
-                  file=sys.stderr, flush=True)
+            print(f"{self.name} is unhealthy", file=sys.stderr, flush=True)
             print(f"Created {self.creation_timestamp}",
                   f"last healthy {self.active_timestamp}", 
                   file=sys.stderr, flush=True)
         else:
-            print(f"Inactive {self.role} {self.name} at {self.ip}", 
+            print(f"Inactive {self.name}", 
                   file=sys.stderr, flush=True)
         return False
 
     def shake_hands(self):
+        print(f"{self.name} shook hands", flush=True)
         self.active_timestamp = time.time()
 
 class ClientInstance(Instance):
@@ -131,6 +131,8 @@ class ClientInstance(Instance):
 
     def register_tasks(self, tasks):
         self.my_tasks += [t.id for t in tasks]
+        for t in tasks:
+            print(f"Task {t.id} is registered with {self.name}")
     
     def unregister_task(self, t_id):
         self.my_tasks = list(filter(lambda i: i != t_id, self.my_tasks))

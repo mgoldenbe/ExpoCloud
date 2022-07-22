@@ -56,12 +56,15 @@ def get_unused_port():
         s.bind(('',0))
         return s.getsockname()[1]
 
+instance_id = 0
 def next_instance_name(role, prefix):
+    global instance_id 
+    instance_id += 1
     first_dash = '-' if prefix else ''
     if role == InstanceRole.CLIENT: 
-        return f"{prefix}{first_dash}client-{round(time.time())}"
+        return f"{prefix}{first_dash}client-{instance_id}"
     assert(role == InstanceRole.BACKUP_SERVER)
-    return f"{prefix}-server-{round(time.time())}"
+    return f"{prefix}-server-{instance_id}"
 
 def get_guest_qs(ip, port, q_names):
     """
@@ -97,13 +100,14 @@ def handshake(my_role, my_port):
     try:
         server_ip = sys.argv[1]
         server_port = int(sys.argv[2])
+        my_name = sys.argv[3]
     except Exception as e:
         handle_exception(e, f"Wrong command-line arguments {sys.argv}")
 
     try:
         handshake_q, = get_guest_qs(
             server_ip, server_port, ['handshake_q'])
-        handshake_q.put((my_role, my_ip(), my_port))
+        handshake_q.put((my_role, my_name, my_port))
     except Exception as e:
         handle_exception(e, 'Handshake with the server failed')
 

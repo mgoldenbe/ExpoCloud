@@ -1,11 +1,9 @@
 # @ Meir Goldenberg The module is part of the ExpoCloud Framework
 
 import pickle
-from pydoc import cli
 import time
 import os
 import sys
-from xmlrpc.client import FastParser
 
 from src import util
 from src.util import InstanceRole, MessageType, handle_exception
@@ -17,7 +15,8 @@ class Server():
     An instance of this class is either a primary or a backup server.
     """
     def __init__(self, tasks, engine, backup, 
-                 max_clients, min_group_size = 0):
+                 max_clients = None, max_cpus_per_client = None, 
+                 min_group_size = 0):
         """
         Note that this constructor is only ever involked for building the first primary server.
         `backup` - whether a backup server should be used.
@@ -28,6 +27,7 @@ class Server():
         self.engine = engine
         self.backup = backup
         self.max_clients = max_clients
+        self.max_cpus_per_client = max_cpus_per_client
         self.clients = []
         self.clients_stopped_timestamp = None
 
@@ -161,10 +161,10 @@ class Server():
             util.make_manager(['handshake_q'], self.port)
         self.handshake_q = self.handshake_manager.handshake_q()
 
-    def handshake_from_client(self, ip, port):
-        client = self.get_client(ip)
+    def handshake_from_client(self, name, port):
+        client = self.get_client(name)
         if not client:
-            print(f"Unknown client tried to connect from {ip}",
+            print(f"Unknown client {name} tried to connect",
                     file=sys.stderr, flush=True)
             return
         client.port = port
@@ -175,9 +175,9 @@ class Server():
             self.backup_server, MessageType.NEW_CLIENT, 
                 (client.name, client.ip, client.port, client.active_timestamp))
     
-    def handshake_from_backup(self, ip, port):
-        if ip != self.backup_server.ip:
-            print(f"Unknown backup server tried to connect from {ip}",
+    def handshake_from_backup(self, name, port):
+        if name != self.backup_server.name:
+            print(f"Unknown backup server {name} tried to connect",
                   file=sys.stderr, flush=True)
             return
         self.backup_server.port = port
@@ -186,29 +186,29 @@ class Server():
 
     def accept_handshakes(self):
         while not self.handshake_q.empty():
-            role, ip, port = self.handshake_q.get_nowait()
+            role, name, port = self.handshake_q.get_nowait()
             assert(role == InstanceRole.CLIENT or 
                    role == InstanceRole.BACKUP_SERVER)
             {InstanceRole.CLIENT: self.handshake_from_client,
              InstanceRole.BACKUP_SERVER: self.handshake_from_backup} \
-             [role](ip, port)
+             [role](name, port)
 
     def n_active_clients(self):
         return len(list(filter(lambda c: c.active_timestamp, self.clients)))
 
-    def get_client(self, ip):
+    def get_client(self, name):
         try:
-            return next(filter(lambda c: c.ip == ip, self.clients))
+            return next(filter(lambda c: c.name == name, self.clients))
         except:
             return None
 
-    def kill_client(self, ip):
+    def kill_client(self, name):
         self.clients = \
-            list(filter(lambda c: c.ip != ip, self.clients))
+            list(filter(lambda c: c.name != name, self.clients))
 
     def kill_instance(self, instance):
         if is_client(instance):
-            self.kill_client(instance.ip)
+            self.kill_client(instance.name)
             return
         if is_backup(instance):
             self.backup_server = None
@@ -263,14 +263,15 @@ class Server():
                 ClientInstance(self.engine, self.tasks_from_failed))
         client = self.clients[-1]
         if not client.ip: client.create()
-        if client.ip: client.run(self.port)
+        if client.ip: client.run(self.port, self.max_cpus_per_client)
 
     def create_instance(self):
         if self.backup and \
             (not self.backup_server or not self.backup_server.active_timestamp):
             self.create_backup_server_instance()
         else:
-            if self.n_active_clients() < self.max_clients:
+            if (not self.max_clients) or \
+               self.n_active_clients() < self.max_clients:
                 self.create_client_instance()
 
     def kill_unhealthy_instances(self):
@@ -295,9 +296,9 @@ class Server():
         tasks_remain = self.tasks_remain()
         for c in self.clients:
             if c.is_healthy(tasks_remain): continue
-            self.kill_client(c.ip)
+            self.kill_client(c.name)
             self.message_to_instance(
-                self.backup_server, MessageType.CLIENT_FAILURE, c.ip)
+                self.backup_server, MessageType.CLIENT_FAILURE, c.name)
         
         if self.backup_server and \
            not self.backup_server.is_healthy(tasks_remain):
@@ -346,7 +347,7 @@ class Server():
             instance.outbound_q.put(message)
         except Exception as e:
             handle_exception(
-                e, f"Message {type} to instance at {instance.ip} failed", False)
+                e, f"Message {type} to instance {instance.name} failed", False)
             self.kill_instance(instance)
 
     def messages_waiting(self, instance):
@@ -365,7 +366,7 @@ class Server():
             return True
         except Exception as e:
             handle_exception(
-                e, f"Message check from {instance.role} at {instance.ip} failed", False)
+                e, f"Message check from {instance.name} failed", False)
             self.kill_instance(instance)
 
     def forward_message(self, instance, message_id, type, body):
@@ -376,7 +377,7 @@ class Server():
         if type == MessageType.HEALTH_UPDATE: return
         self.message_to_instance(
             self.backup_server, MessageType.MESSAGE_FROM_CLIENT, 
-            (instance.ip, message_id, type, body))
+            (instance.name, message_id, type, body))
 
 #endregion MESSAGES
 
@@ -417,7 +418,7 @@ class Server():
 
     def process_result(self, client, body):
         id, result = body
-        print(f"Client at {client.ip} - result for task {id}", 
+        print(f"Client {client.name} - result for task {id}", 
               flush=True)
         client.unregister_task(id)
         task = self.tasks[id]
@@ -440,7 +441,7 @@ class Server():
 
     def process_bye(self, client, _body):
         assert(is_client(client))
-        print(f"Got bye from {client.ip}; {len(client.my_tasks)} registered tasks remain", flush=True)
+        print(f"Got bye from {client.name}; {len(client.my_tasks)} registered tasks remain", flush=True)
         self.kill_instance(client)
 
     def process_new_client(self, _instance, body):
@@ -450,12 +451,12 @@ class Server():
         client.shake_hands(self.role, self.output_folder)
         self.clients.append(client)
 
-    def process_client_failure(self, _instance, ip):
+    def process_client_failure(self, _instance, name):
         """
         Process client failure reported by the primary server.
         """
         assert(self.is_backup())
-        self.kill_client(ip)
+        self.kill_client(name)
 
     def process_message(self, instance, type, body):
         {
@@ -470,8 +471,6 @@ class Server():
         MessageType.NEW_CLIENT: self.process_new_client,
         MessageType.CLIENT_FAILURE: self.process_client_failure,
         } [type](instance, body)
-        if type != MessageType.HEALTH_UPDATE:
-            print("Message handled", flush=True)
 
     def handle_messages(self):
         """
@@ -483,9 +482,7 @@ class Server():
             
             while self.messages_waiting(instance):
                 message_id, type, body = instance.inbound_q.get_nowait()
-                if type != MessageType.HEALTH_UPDATE:
-                    print(f"Got {message_id} of type {type} from {instance.role}", 
-                        flush=True)
+                #if type != MessageType.HEALTH_UPDATE: print(f"Got {message_id} of type {type} from {instance.role}", flush=True)
                 if self.is_primary():
                     if is_client(instance):
                         self.forward_message(instance, message_id, type, body)
@@ -504,8 +501,8 @@ class Server():
                 
                 assert(type == MessageType.MESSAGE_FROM_CLIENT)
                 print("Processing forwarded message", flush=True)
-                ip, orig_id, message_type, message_body = body
-                client = self.get_client(ip)
+                name, orig_id, message_type, message_body = body
+                client = self.get_client(name)
                 assert(client)
                 received_id = client.received_ids.pop(0)
                 assert(orig_id == received_id)

@@ -67,7 +67,7 @@ class AbstractEngine:
         self.last_creation_timestamp = time.time()
         return ip
 
-    def run_instance(self, ip, type, server_port):
+    def run_instance(self, name, ip, type, server_port, max_cpus = None):
         """
         Create and run the instance of the given type.
         """
@@ -76,7 +76,7 @@ class AbstractEngine:
                 InstanceRole.BACKUP_SERVER: 
                     f"src.run_backup {my_ip()} {server_port}",
                 InstanceRole.CLIENT: 
-                    f"{self.project_folder}.run_client {my_ip()} {server_port}"
+                    f"{self.project_folder}.run_client {my_ip()} {server_port} {name} {max_cpus}"
             }[type]
             command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
             remote_execute(ip, command)
