@@ -54,9 +54,7 @@ class Client:
         self.done_tasks = []
         self.n_requested = 0 # number of tasks requested, but not granted yet
         self.no_further_tasks = False # True - no more tasks at the server
-        self.capacity = cpu_count()
-        if sys.argv[4] != "None":
-            self.capacity = min(self.capacity, int(sys.argv[4]))
+        self.capacity = min(cpu_count(), util.command_arg_max_cpus())
 
         self.port = util.get_unused_port()
         self.manager = util.make_manager(

@@ -1,12 +1,13 @@
 # @ Meir Goldenberg The module is part of the ExpoCloud Framework
 
 import pickle
+import subprocess
 import time
 import os
 import sys
 
 from src import util
-from src.util import InstanceRole, MessageType, handle_exception
+from src.util import InstanceRole, MessageType, handle_exception, my_ip
 from src.constants import Constants
 from src.instance import Instance, ClientInstance, BackupServerInstance, PrimaryServerInstance, is_primary, is_backup, is_client
 
@@ -46,7 +47,7 @@ class Server():
             t.id = i
             t.result = None
         
-        self.output_folder = Constants.OUTPUT_FOLDER
+        self.output_folder = util.output_folder()
         os.makedirs(self.output_folder, exist_ok=True)
         self.results_file = \
             open(os.path.join(self.output_folder, 'results.txt'), "w")
@@ -129,6 +130,7 @@ class Server():
         """
         assert(self.is_primary())
         self.role = InstanceRole.BACKUP_SERVER
+        self.output_folder = util.output_folder(util.command_arg_name())
         self.backup_server = None
 
         self.port = util.get_unused_port()
@@ -239,16 +241,23 @@ class Server():
                 self.handshake_manager, self.handshake_q, self.results_file, self.backup_server
             self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
                 None, None, None, None
-            with open(Constants.PICKLED_SERVER_FILE, 'wb') as f:
+            with open(util.pickled_file_name(), 'wb') as f:
                 pickle.dump(self, f)
             self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
                 temp_handshake_manager, temp_handhsake_q, temp_results_file, temp_backup_server
 
             # copy output folder
-            util.remote_replace(
-                self.backup_server.ip, 
-                os.path.join(self.engine.root_folder, 
-                                self.output_folder))
+            backup_output_folder = \
+                    util.output_folder(self.backup_server.name)
+            if not self.engine.is_local():
+                util.remote_replace(
+                    self.output_folder,
+                    self.backup_server.ip, 
+                    os.path.join(self.engine.root_folder, 
+                                 backup_output_folder))
+            else:
+                command = f"cp -r {self.output_folder} {backup_output_folder}"
+                subprocess.check_output(command, shell=True)
             
             self.stop_clients()
     
@@ -447,7 +456,7 @@ class Server():
     def process_new_client(self, _instance, body):
         assert(self.is_backup())
         client = ClientInstance(None, self.tasks_from_failed)
-        client.name, client.ip, client.active_timestamp = body
+        client.name, client.ip, client.port, client.active_timestamp = body
         client.shake_hands(self.role, self.output_folder)
         self.clients.append(client)
 

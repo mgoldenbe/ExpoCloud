@@ -4,6 +4,7 @@ try:
 except:
     pass
 
+import os
 import subprocess
 import sys
 import time
@@ -15,6 +16,31 @@ from typing import Tuple
 from src.constants import Constants
 from multiprocessing import Queue
 from multiprocessing.managers import SyncManager
+
+def command_arg_ip():
+    try:
+        return sys.argv[1]
+    except Exception as e:
+        handle_exception(e, f"Wrong command-line arguments")
+
+def command_arg_port():
+    try:
+        return int(sys.argv[2])
+    except Exception as e:
+        handle_exception(e, f"Wrong command-line arguments")
+
+def command_arg_name():
+    try:
+        return sys.argv[3]
+    except Exception as e:
+        handle_exception(e, f"Wrong command-line arguments")
+
+def command_arg_max_cpus():
+    try:
+        if sys.argv[4] == "None": return sys.maxsize
+        return int(sys.argv[4])
+    except Exception as e:
+        handle_exception(e, f"Wrong command-line arguments")
 
 class InstanceRole:
     PRIMARY_SERVER = 'PRIMARY_SERVER'
@@ -64,7 +90,7 @@ def next_instance_name(role, prefix):
     if role == InstanceRole.CLIENT: 
         return f"{prefix}{first_dash}client-{instance_id}"
     assert(role == InstanceRole.BACKUP_SERVER)
-    return f"{prefix}-server-{instance_id}"
+    return f"{prefix}{first_dash}server-{instance_id}"
 
 def get_guest_qs(ip, port, q_names):
     """
@@ -97,12 +123,9 @@ def make_manager(q_names, port):
     return manager
 
 def handshake(my_role, my_port):
-    try:
-        server_ip = sys.argv[1]
-        server_port = int(sys.argv[2])
-        my_name = sys.argv[3]
-    except Exception as e:
-        handle_exception(e, f"Wrong command-line arguments {sys.argv}")
+    server_ip = command_arg_ip()
+    server_port = command_arg_port()
+    my_name = command_arg_name()
 
     try:
         handshake_q, = get_guest_qs(
@@ -129,40 +152,48 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
 def get_project_root() -> Path:
     return Path(__file__).parent.parent
 
-def my_ip():
-    return socket.gethostbyname(socket.gethostname())
+def my_name():
+    return socket.gethostname()
 
-def remote(ip, command_or_folder, type):
+def my_ip():
+    return socket.gethostbyname(my_name())
+
+def output_folder(instance_name = None):
+    if not instance_name: instance_name = my_name()
+    return f"output-{instance_name}"
+
+def pickled_file_name(instance_name = None):
+    return os.path.join(output_folder(instance_name), 'pickled')
+
+def ssh_command(ip, command):
     key = '~/.ssh/id_rsa'
-    if type == 'execute':
-        command = command_or_folder
-        ssh_command = \
-                f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\" 2>>ssh_err"
-    else:
-        assert(type == 'copy')
-        folder = command_or_folder
-        ssh_command = \
-                f"scp -i {key} -o StrictHostKeyChecking=no -r {folder} {ip}:{folder} 2>> ssh_err"
-    print(ssh_command, flush=True)
+    return f"ssh {ip} -i {key} -o StrictHostKeyChecking=no \"{command}\" 2>>ssh_err"
+
+def scp_command(ip, source_folder, dest_folder):
+    key = '~/.ssh/id_rsa'
+    return f"scp -i {key} -o StrictHostKeyChecking=no -r {source_folder} {ip}:{dest_folder} 2>> ssh_err"
+
+def attempt_command(command, n_attempts = 3):
+    print(command, flush=True)
     attempts_left = 3
     while attempts_left:
         try:
-            status = subprocess.check_output(ssh_command, shell=True)
+            status = subprocess.check_output(command, shell=True)
             return 0
         except Exception as e:
             attempts_left -= 1
             time.sleep(Constants.SSH_RETRY_DELAY)
 
-    print(f"Failed to execute command remotely at {ip}", 
+    print(f"Failed to execute command", 
           file = sys.stderr, flush = True)
     return None
 
 def remote_execute(ip, command):
-    return remote(ip, command, 'execute')
+    return attempt_command(ssh_command(ip, command))
 
-def remote_replace(ip, folder):
-    remote_execute(ip, f"rm -rf {folder}")
-    return remote(ip, folder, 'copy')
+def remote_replace(ip, source_folder, dest_folder):
+    remote_execute(ip, f"rm -rf {dest_folder}")
+    return attempt_command(scp_command(ip, source_folder, dest_folder))
 
 def filter_indices(arr, cond):
     """

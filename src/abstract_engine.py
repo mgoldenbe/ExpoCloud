@@ -35,6 +35,8 @@ class AbstractEngine:
         # halved, because doubling after the first failure.
         self.creation_delay = Constants.MIN_CREATION_DELAY / 2 
 
+    def is_local(self): return False
+
     def creation_attempt_allowed(self):
         """
         Makes sure that instance creation attempts are performed with exponentially increasing delays.
@@ -74,7 +76,7 @@ class AbstractEngine:
         try:
             python_arg = {
                 InstanceRole.BACKUP_SERVER: 
-                    f"src.run_backup {my_ip()} {server_port}",
+                    f"src.run_backup {my_ip()} {server_port} {name}",
                 InstanceRole.CLIENT: 
                     f"{self.project_folder}.run_client {my_ip()} {server_port} {name} {max_cpus}"
             }[type]

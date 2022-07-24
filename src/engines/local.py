@@ -17,6 +17,8 @@ class LocalEngine:
         self.last_instance_timestamp = 0
         self.time_between_instances = 10
     
+    def is_local(self): return True
+
     # For compatibility
     def next_instance_name(self, type):
         return next_instance_name(type, "")
@@ -30,16 +32,17 @@ class LocalEngine:
         return util.my_ip()
 
     def run_instance(self, name, _ip, role, server_port, max_cpus = None):
-        if role != InstanceRole.CLIENT: return None
-        try:
-            self.run_instance_(
-                f"{self.project_folder}.run_client \"{util.my_ip()}\" {server_port} {name} {max_cpus}")
-        except Exception as e:
-            util.handle_exception(e, f"Exception running new client", False)
-    
-    def kill_instance(self, name_):
-        pass
-
-    def run_instance_(self, python_arg):
-        command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
+        python_arg = None
+        if role == InstanceRole.CLIENT:
+            python_arg = \
+                f"{self.project_folder}.run_client \"{util.my_ip()}\" {server_port} {name} {max_cpus}"
+        else:
+            assert(role == InstanceRole.BACKUP_SERVER)
+            python_arg = \
+                f"src.run_backup \"{util.my_ip()}\" {server_port} {name}"
+        command = f"cd {self.root_folder}; python -m {python_arg} >out-{name} 2>err-{name} &"
+        #print(command, flush=True)
         subprocess.check_output(command, shell=True)
+    
+    def kill_instance(self, name):
+        subprocess.check_output(f"pkill -f {name}", shell=True)        

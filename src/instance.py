@@ -38,7 +38,7 @@ class Instance():
         self.ip = self.engine.create_instance(self.name, self.role)
         if self.ip: self.creation_timestamp = time.time()
 
-    def run(self, server_port, max_cpus):
+    def run(self, server_port, max_cpus = None):
         self.engine.run_instance(self.name, self.ip, self.role, server_port, max_cpus)
     
     def __del__(self):
@@ -164,12 +164,7 @@ class PrimaryServerInstance:
     """
     def __init__(self, my_port):
         self.role = InstanceRole.PRIMARY_SERVER
-
-        try:
-            self.ip = sys.argv[1]
-        except Exception as e:
-            handle_exception(e, f"Wrong command-line arguments {sys.argv}")
-
+        self.ip = util.command_arg_ip()
         self.manager = util.make_manager(
             ['to_primary_q', 'from_primary_q'], my_port)
         self.outbound_q, self.inbound_q = \

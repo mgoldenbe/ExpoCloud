@@ -14,7 +14,7 @@ from examples.agent_assignment.task import Task
 from examples.agent_assignment.bnb import Option
 
 tasks = []
-max_n_tasks = 17
+max_n_tasks = 7
 options = {Option.HEURISTIC}
 
 for n_tasks in range(max_n_tasks, max_n_tasks + 1):
@@ -39,4 +39,4 @@ else:
     }
     engine = GCE(config)
 
-Server(tasks, engine, backup = (mode != Mode.LOCAL), min_group_size=20, max_cpus_per_client = 2).run()
+Server(tasks, engine, backup = True, min_group_size=20, max_cpus_per_client = 2).run()
