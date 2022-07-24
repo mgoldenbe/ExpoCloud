@@ -91,8 +91,9 @@ class ClientInstance(Instance):
         super().__init__(InstanceRole.CLIENT, engine)
         self.tasks_from_failed = tasks_from_failed
         self.my_tasks = [] # ids of tasks held by the client
-        self.received_ids = [] # ids of messages received from primary server
-                               # not yet matched by those from backup server
+
+        # The following is for backup server - ids of client messages forwarded by primary server not yet matched by direct messages from the client
+        self.received_ids = []
     
     def __del__(self):
         if self.active_timestamp:
@@ -119,14 +120,17 @@ class ClientInstance(Instance):
         except:
             pass # if the client has died, it will be handled elsewhere
 
+    def init_files(self, parent_dir):
+        path = os.path.join(parent_dir, self.name)
+        os.makedirs(path, exist_ok=True)
+        self.events_file = open(os.path.join(path, 'events.txt'), "a")
+        self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "a")
+        
     def shake_hands(self, server_role, parent_dir: str):
         print(f"{server_role} attempting to connect to client queues", flush=True)
         self.connect(server_role)
         print(f"{server_role} connected to client queues", flush=True)
-        path = os.path.join(parent_dir, self.name)
-        os.makedirs(path, exist_ok=True)
-        self.events_file = open(os.path.join(path, 'events.txt'), "w")
-        self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "w")
+        self.init_files(parent_dir)
         super().shake_hands()
 
     def register_tasks(self, tasks):

@@ -14,7 +14,7 @@ from examples.agent_assignment.task import Task
 from examples.agent_assignment.bnb import Option
 
 tasks = []
-max_n_tasks = 7
+max_n_tasks = 17
 options = {Option.HEURISTIC}
 
 for n_tasks in range(max_n_tasks, max_n_tasks + 1):

@@ -8,7 +8,7 @@ class Constants:
     HEALTH_UPDATE_FREQUENCY = 10 # Frequency of health updates
     HEALTH_UPDATE_LIMIT = 300 # If no health update, kill the instance
     SSH_RETRY_DELAY = 5 # If ssh fails, try again after this delay
-    CLIENTS_STOP_TIME = 5 # Time duration clients are kept stopped on server failure before the backup server is created
+    CLIENTS_TIME_TO_STOP = 5 # Time for clients so surely stop sending messages
     
     OUTPUT_FOLDER = 'output'
     PICKLED_SERVER_FILE = os.path.join(OUTPUT_FOLDER, 'pickled')

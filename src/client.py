@@ -74,8 +74,9 @@ class Client:
         self.stopped_flag = False
         self.received_ids = [] # ids of messages received from primary server
                                # not yet matched by messages from backup server
-        self.pass_received_ids = 0 # skip putting id into received_ids
-                                   # this many times
+        
+        # When RESUME is received, the backup server will never match the messages currently in from_primary_q. Hence, when these messages are processed, their ids should not be stored. The following variable remembers the number of such messages.
+        self.pass_received_ids = 0
 
     #region UTILITY METHODS FOR COMMUNICATING WITH THE SERVERS
 
@@ -136,7 +137,11 @@ class Client:
 
     def process_resume(self, _body):
         self.stopped_flag = False
+        print(f"Removing received_ids: {self.received_ids}", flush=True)
+        self.received_ids = []
+        assert(self.pass_received_ids == 0)
         self.pass_received_ids = self.from_primary_q.qsize()
+        print(f"Will pass {self.pass_received_ids} ids: {[self.from_primary_q.queue[i][0] for i in range(self.pass_received_ids)]}", flush=True)
 
     def process_swap_queues(self, _body):
         self.to_primary_q, self.to_backup_q = \
@@ -147,6 +152,7 @@ class Client:
     def process_messages(self):
         while not self.from_primary_q.empty():
             id, type, body = self.from_primary_q.get_nowait()
+            print(f"Primary server sent {id} {type}", flush=True)
             {MessageType.GRANT_TASKS: self.process_grant_tasks,
              MessageType.APPLY_DOMINO_EFFECT: self.apply_domino_effect,
              MessageType.NO_FURTHER_TASKS: self.process_no_further_tasks,
@@ -155,14 +161,19 @@ class Client:
              MessageType.SWAP_QUEUES: self.process_swap_queues,
              } \
              [type](body)
-            if not self.pass_received_ids:
-                self.received_ids.append(id)
-            else:
-                self.pass_received_ids -= 1
+
+            assert(self.pass_received_ids >= 0)
+            if id:
+                if self.pass_received_ids:
+                    print(f"Not appending into received_ids (self.pass_received_ids={self.pass_received_ids})", flush=True)
+                    self.pass_received_ids -= 1
+                else:
+                    self.received_ids.append(id)                
         
         while self.received_ids and not self.from_backup_q.empty():
-            id, _type, _body = self.from_primary_q.get_nowait()
-            received_id = self.received_ids.pop()
+            id, type, _body = self.from_backup_q.get_nowait()
+            print(f"Backup server sent {id} {type}", flush=True)
+            received_id = self.received_ids.pop(0)
             assert(id == received_id)
     
     #endregion PROCESSING MESSAGES FROM PRIMARY SERVER

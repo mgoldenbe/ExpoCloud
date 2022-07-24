@@ -138,10 +138,15 @@ class Server():
         util.handshake(self.role, self.port)
         print("Handshake with primary server complete", flush=True)
 
+        if len(self.clients) > 0 and not self.clients[-1].active_timestamp:
+            self.clients = self.clients[:-1]
+            
         self.update_client_connections()
         for c in self.clients: 
             c.engine = None
             c.received_ids = []
+            c.init_files(self.output_folder)
+
     
     def assume_primary_role(self):
         """
@@ -173,6 +178,7 @@ class Server():
         client.shake_hands(self.role, self.output_folder)
 
         # inform the backup server
+        print(f"Informing backup server of {client.name}", flush=True)
         self.message_to_instance(
             self.backup_server, MessageType.NEW_CLIENT, 
                 (client.name, client.ip, client.port, client.active_timestamp))
@@ -191,6 +197,9 @@ class Server():
             role, name, port = self.handshake_q.get_nowait()
             assert(role == InstanceRole.CLIENT or 
                    role == InstanceRole.BACKUP_SERVER)
+            if role == InstanceRole.CLIENT and self.clients_stopped_timestamp:
+                self.handshake_q.put((role, name, port))
+                continue
             {InstanceRole.CLIENT: self.handshake_from_client,
              InstanceRole.BACKUP_SERVER: self.handshake_from_backup} \
              [role](name, port)
@@ -214,39 +223,31 @@ class Server():
             return
         if is_backup(instance):
             self.backup_server = None
+            self.stop_clients()
             return
         assert(False)
-
+    
     def create_backup_server_instance(self):
-        if not self.backup_server:
-            self.backup_server = BackupServerInstance(self.engine)
-            self.backup_server_has_been_run = False
-
-        assert(self.backup_server)
-        if not self.backup_server.ip:
-            self.backup_server.create()
-
-        if self.backup_server.ip:
-            if self.clients_stopped_timestamp:
-                if time.time() - self.clients_stopped_timestamp >= \
-                    Constants.CLIENTS_STOP_TIME:
-                    if not self.backup_server_has_been_run:
-                        self.backup_server.run(self.port)
-                        self.backup_server_has_been_run = True
-                return
-            # serialize the primary server, i.e. self
-            
+        def pickle_server():
             # exclude things that should not be pickled/unpickled
             temp_handshake_manager, temp_handhsake_q, temp_results_file, temp_backup_server = \
                 self.handshake_manager, self.handshake_q, self.results_file, self.backup_server
             self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
                 None, None, None, None
+            client_files = []
+            for c in self.clients:
+                if not c.active_timestamp: continue
+                client_files.append((c.events_file, c.exceptions_file))
+                c.events_file, c.exceptions_file = None, None
             with open(util.pickled_file_name(), 'wb') as f:
                 pickle.dump(self, f)
             self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
                 temp_handshake_manager, temp_handhsake_q, temp_results_file, temp_backup_server
-
-            # copy output folder
+            for c in self.clients:
+                if not c.active_timestamp: continue
+                c.events_file, c.exceptions_file  = client_files.pop(0)
+        
+        def copy_output_folder():
             backup_output_folder = \
                     util.output_folder(self.backup_server.name)
             if not self.engine.is_local():
@@ -258,9 +259,32 @@ class Server():
             else:
                 command = f"cp -r {self.output_folder} {backup_output_folder}"
                 subprocess.check_output(command, shell=True)
-            
-            self.stop_clients()
-    
+
+        # If not first backup server instance, make sure all clients got the STOP message and all client messages had been handled
+        if self.clients_stopped_timestamp:
+            if time.time() - self.clients_stopped_timestamp <= \
+               Constants.CLIENTS_TIME_TO_STOP: 
+               return
+            for c in self.clients:
+                if self.messages_waiting(c): return
+
+        if not self.backup_server:
+            self.backup_server = BackupServerInstance(self.engine)
+            self.backup_server_has_been_run = False
+            return
+
+        assert(self.backup_server)
+        if not self.backup_server.ip:
+            self.backup_server.create()
+            return
+
+        assert(self.backup_server.ip)
+        if self.backup_server_has_been_run: return
+        pickle_server()
+        copy_output_folder()
+        self.backup_server.run(self.port)
+        self.backup_server_has_been_run = True
+
     def create_client_instance(self):
         # If no more tasks, don't create another client
         if not self.tasks_remain(): return
@@ -298,6 +322,7 @@ class Server():
                               flush=True)
                     self.message_to_instance(c, MessageType.SWAP_QUEUES, None)
                     c.outbound_q = temp
+                    c.engine = self.engine
                     
             return
         
@@ -340,16 +365,16 @@ class Server():
 #endregion INSTANCES
 
 #region MESSAGES
-
     def message_to_instance(self, instance, type, body):
-        if not instance or not instance.active_timestamp: 
+        if not instance or not instance.active_timestamp:
             return
 
-        #print(f"{type} to {instance.role}", flush=True)
         try:
             message = (type, body)
-            if is_client(instance):
+            if is_client(instance) and \
+               type not in [MessageType.STOP, MessageType.RESUME]:
                 message = (self.to_client_id,) + message
+                print(f"Sending message {self.to_client_id} ({type}) to {instance.name}", flush=True)
                 self.to_client_id += 1
             else:
                 message = (None,) + message
@@ -362,16 +387,21 @@ class Server():
     def messages_waiting(self, instance):
         """
         Checks whether a message from `instance` can be read.
+        If intance is invalid or is not active, return False.
         If there is no message in the inbound queue from the `instance`, return False. Otherwise return True, unless it is the backup server, `instance` is a client and there is no stored message id for this client.
         """
         try:
+            if not instance or not instance.active_timestamp: return False
             if instance.inbound_q.empty(): return False
-
+            
             if self.is_primary(): return True
 
             assert(self.is_backup())
-            if is_client(instance) and not instance.received_ids: 
-                return False
+            if not is_client(instance): return True
+            if not instance.received_ids: return False
+            id = instance.inbound_q.queue[0][0]
+            received_id = instance.received_ids.pop(0)
+            assert(id == received_id)
             return True
         except Exception as e:
             handle_exception(
@@ -457,6 +487,7 @@ class Server():
         assert(self.is_backup())
         client = ClientInstance(None, self.tasks_from_failed)
         client.name, client.ip, client.port, client.active_timestamp = body
+        print(f"New {client.name}", flush=True)
         client.shake_hands(self.role, self.output_folder)
         self.clients.append(client)
 
@@ -487,20 +518,19 @@ class Server():
         """
         for instance in \
             self.clients + [self.primary_server, self.backup_server]:
-            if not instance or not instance.active_timestamp: continue
             
             while self.messages_waiting(instance):
                 message_id, type, body = instance.inbound_q.get_nowait()
                 #if type != MessageType.HEALTH_UPDATE: print(f"Got {message_id} of type {type} from {instance.role}", flush=True)
                 if self.is_primary():
                     if is_client(instance):
+                        #print(f"Handling message {message_id} ({type}) from {instance.name}", flush=True)
                         self.forward_message(instance, message_id, type, body)
                     self.process_message(instance, type, body)
                     continue
 
                 assert(self.is_backup())
                 if is_client(instance):
-                    instance.received_ids.append(message_id)
                     continue
 
                 assert(is_primary(instance))
@@ -509,16 +539,12 @@ class Server():
                     continue
                 
                 assert(type == MessageType.MESSAGE_FROM_CLIENT)
-                print("Processing forwarded message", flush=True)
                 name, orig_id, message_type, message_body = body
                 client = self.get_client(name)
                 assert(client)
-                received_id = client.received_ids.pop(0)
-                assert(orig_id == received_id)
-                print("Message ids matched", flush=True)
                 
-                print(f"Got forwarded {orig_id} of type {type}", 
-                      flush=True)
+                #print(f"Handling message {orig_id} ({message_type}) from {client.name}", flush=True)
+                client.received_ids.append(orig_id)
                 self.process_message(client, message_type, message_body)
 
 #endregion PROCESSING MESSAGES

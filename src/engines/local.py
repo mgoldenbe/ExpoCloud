@@ -42,7 +42,9 @@ class LocalEngine:
                 f"src.run_backup \"{util.my_ip()}\" {server_port} {name}"
         command = f"cd {self.root_folder}; python -m {python_arg} >out-{name} 2>err-{name} &"
         #print(command, flush=True)
-        subprocess.check_output(command, shell=True)
+        subprocess.check_output(command, shell=True, start_new_session=True)
     
     def kill_instance(self, name):
-        subprocess.check_output(f"pkill -f {name}", shell=True)        
+        return
+        command = f"pkill -f \"{name}\""
+        subprocess.check_output(command, shell=True)

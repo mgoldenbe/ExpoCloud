@@ -82,15 +82,17 @@ def get_unused_port():
         s.bind(('',0))
         return s.getsockname()[1]
 
-instance_id = 0
+instance_id = {} # role->id
 def next_instance_name(role, prefix):
-    global instance_id 
-    instance_id += 1
+    global instance_id
+    if role not in instance_id: instance_id[role] = 0
+    instance_id[role] += 1
+    id = instance_id[role]
     first_dash = '-' if prefix else ''
     if role == InstanceRole.CLIENT: 
-        return f"{prefix}{first_dash}client-{instance_id}"
+        return f"{prefix}{first_dash}client-{id}"
     assert(role == InstanceRole.BACKUP_SERVER)
-    return f"{prefix}{first_dash}server-{instance_id}"
+    return f"{prefix}{first_dash}server-{id}"
 
 def get_guest_qs(ip, port, q_names):
     """
@@ -139,7 +141,7 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
     """
     Print the custom error message and the exception and exit unless exit_flag==False.
     """
-    descr = msg
+    descr = str(time.time()) + "   " + msg
     e_str = traceback.format_exc()
     if e_str: descr += "\n" + e_str
     if to_primary_q:
