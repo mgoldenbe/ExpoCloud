@@ -45,7 +45,8 @@ class Instance():
         if self.ip and self.engine:
             print(f"The {self.role} {self.name} is being killed", 
                 file=sys.stderr, flush=True)
-            self.engine.kill_instance(self.name)
+            if not self.engine.is_local(): # for local, just let it complete
+                self.engine.kill_instance(self.name)
     
     def is_healthy(self, tasks_remain: bool):
         """

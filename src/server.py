@@ -57,8 +57,10 @@ class Server():
         self.to_client_id = 1000 # id of the next outbound message to a client
         
     def __del__(self):
+        print("Shutting down", flush=True)
         self.results_file.close()
-        self.handshake_manager.shutdown()
+        if self.is_primary():
+            self.handshake_manager.shutdown()
 
     def run(self):
         if self.is_primary():
@@ -131,6 +133,8 @@ class Server():
         assert(self.is_primary())
         self.role = InstanceRole.BACKUP_SERVER
         self.output_folder = util.output_folder(util.command_arg_name())
+        self.results_file = \
+            open(os.path.join(self.output_folder, 'results.txt'), "w")
         self.backup_server = None
 
         self.port = util.get_unused_port()
@@ -379,9 +383,8 @@ class Server():
             else:
                 message = (None,) + message
             instance.outbound_q.put(message)
-        except Exception as e:
-            handle_exception(
-                e, f"Message {type} to instance {instance.name} failed", False)
+        except:
+            print(f"Instance {instance.name} failed", flush=True)
             self.kill_instance(instance)
 
     def messages_waiting(self, instance):
@@ -403,9 +406,8 @@ class Server():
             received_id = instance.received_ids.pop(0)
             assert(id == received_id)
             return True
-        except Exception as e:
-            handle_exception(
-                e, f"Message check from {instance.name} failed", False)
+        except:
+            print(f"Instance {instance.name} failed", flush=True)
             self.kill_instance(instance)
 
     def forward_message(self, instance, message_id, type, body):

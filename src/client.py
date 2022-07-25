@@ -243,7 +243,7 @@ class Client:
             worker.start()
 
     def run(self):
-        print("Starting...", file=sys.stderr, flush=True)
+        print("Starting...", flush=True)
         while self.tasks or not self.no_further_tasks:
             self.health_update()
             if not self.stopped_flag:
@@ -256,11 +256,14 @@ class Client:
             self.occupy_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
 
+        print("Waiting for workers to complete...", flush=True)
         while self.workers:
             self.health_update()
             self.process_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
-                
+
+        print("Sending BYE", flush=True)       
         self.message_to_servers(MessageType.BYE, None)
-        time.sleep(Constants.CLIENT_WAIT_AFTER_SENDING_BYE)
+        time.sleep(Constants.CLIENT_WAIT_AFTER_SENDING_BYE) 
         self.manager.shutdown()
+        print("Done", flush=True)

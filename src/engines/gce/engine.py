@@ -59,8 +59,8 @@ class GCE(AbstractEngine):
         """
         Kills the specified instance.
         """
-        print("Instance killing is disabled", flush=True)
-        return
+        # print("Instance killing is disabled", flush=True)
+        # return
         credentials = GoogleCredentials.get_application_default()
         service = discovery.build('compute', 'beta', credentials=credentials)
 

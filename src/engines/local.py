@@ -1,4 +1,5 @@
 import subprocess
+import psutil
 import time
 from sys import stderr
 from src import util
@@ -16,6 +17,7 @@ class LocalEngine:
         self.project_folder = project_folder
         self.last_instance_timestamp = 0
         self.time_between_instances = 10
+        self.name_to_pid = {}
     
     def is_local(self): return True
 
@@ -32,19 +34,34 @@ class LocalEngine:
         return util.my_ip()
 
     def run_instance(self, name, _ip, role, server_port, max_cpus = None):
-        python_arg = None
-        if role == InstanceRole.CLIENT:
-            python_arg = \
-                f"{self.project_folder}.run_client \"{util.my_ip()}\" {server_port} {name} {max_cpus}"
-        else:
-            assert(role == InstanceRole.BACKUP_SERVER)
-            python_arg = \
-                f"src.run_backup \"{util.my_ip()}\" {server_port} {name}"
-        command = f"cd {self.root_folder}; python -m {python_arg} >out-{name} 2>err-{name} &"
-        #print(command, flush=True)
-        subprocess.check_output(command, shell=True, start_new_session=True)
-    
+        args = ['python', '-m',
+            {
+                InstanceRole.CLIENT: f"{self.project_folder}.run_client",
+                InstanceRole.BACKUP_SERVER: 'src.run_backup'
+            }[role], 
+            util.my_ip(), str(server_port), name
+        ]
+        if role == InstanceRole.CLIENT: args.append(str(max_cpus))
+
+        with open(f"out-{name}", 'a') as out, open(f"err-{name}", 'a') as err:
+            pid = \
+                subprocess.Popen(args, stdout=out, stderr=err, shell=False).pid
+            print(f"Created process {pid}")
+            self.name_to_pid[name] = pid
+
     def kill_instance(self, name):
-        return
-        command = f"pkill -f \"{name}\""
-        subprocess.check_output(command, shell=True)
+        # Process tree with full commands: ps auxfww
+        time.sleep(2) # Give it time to shut shown
+        pid = self.name_to_pid[name]
+        print(f"Terminating process {pid}")
+        try:
+            proc = psutil.Process(pid)
+        except:
+            print("It's dead already", flush=True)
+            return
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            print(f"Process {pid} did not terminate in time, killing it")
+            proc.kill()
