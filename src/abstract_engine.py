@@ -3,6 +3,8 @@ from ctypes import util
 import time
 import sys
 
+from src.util import myprint
+from src.constants import Verbosity
 from src.util import handle_exception, my_ip, remote_execute, InstanceRole, next_instance_name
 from src.constants import Constants
 
@@ -30,10 +32,11 @@ class AbstractEngine:
         self.root_folder = config['root_folder']
         self.project_folder = config['project_folder']
         self.last_creation_timestamp = 0
+        self.instance_id = {} # role->id, used to compute next instance name
 
         # No more instances till this passes;
         # halved, because doubling after the first failure.
-        self.creation_delay = Constants.MIN_CREATION_DELAY / 2 
+        self.creation_delay = Constants.MIN_CREATION_DELAY / 2
 
     def is_local(self): return False
 
@@ -45,7 +48,7 @@ class AbstractEngine:
             time.time() - self.last_creation_timestamp >= self.creation_delay
 
     def next_instance_name(self, type):
-        return next_instance_name(type, self.prefix)
+        return next_instance_name(type, self.prefix, self.instance_id)
 
     def image_name(self, type):
         if type == InstanceRole.CLIENT: return self.client_image
@@ -56,16 +59,16 @@ class AbstractEngine:
         Create the instance of the given type.
         """
         if not self.creation_attempt_allowed(): return None
-        print(f"Attempting to create {type} named {name}",
-              file=sys.stderr, flush=True)
+        myprint(Verbosity.instance_creation_etc, 
+                f"Attempting to create {type} named {name}")
         ip = self.create_instance_raw(name, self.image_name(type))
         if not ip:
             self.creation_delay *= 2
-            print(f"Next creation attempt in {self.creation_delay} seconds",
-                    file=sys.stderr, flush=True)
+            myprint(Verbosity.instance_creation_etc,
+                    f"Next creation attempt in {self.creation_delay} seconds")
             return None
             
-        print(f"New {type} at {ip}", file=sys.stderr, flush=True)
+        myprint(Verbosity.all, f"New {name}")
         self.last_creation_timestamp = time.time()
         return ip
 

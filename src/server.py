@@ -5,6 +5,10 @@ import subprocess
 import time
 import os
 import sys
+import traceback
+
+from src.util import myprint
+from src.constants import Verbosity
 
 from src import util
 from src.util import InstanceRole, MessageType, handle_exception, my_ip
@@ -23,6 +27,7 @@ class Server():
         `backup` - whether a backup server should be used.
         `min_group_size` - minimal size of group defined by the Task's `group_parameter_titles` method.
         """
+        myprint(Verbosity.all, "Constructing the server")
         self.role = InstanceRole.PRIMARY_SERVER
         self.port = util.get_unused_port()
         self.engine = engine
@@ -57,15 +62,15 @@ class Server():
         self.to_client_id = 1000 # id of the next outbound message to a client
         
     def __del__(self):
-        print("Shutting down", flush=True)
+        myprint(Verbosity.all, "Shutting down")
         self.results_file.close()
         if self.is_primary():
             self.handshake_manager.shutdown()
 
     def run(self):
         if self.is_primary():
-            print(f"Got {len(self.tasks)} tasks and ready for clients", 
-                  flush=True)
+            myprint(Verbosity.all, 
+                    f"Got {len(self.tasks)} tasks and ready for clients")
 
         try:
             while self.tasks_remain() or self.clients:
@@ -140,17 +145,15 @@ class Server():
         self.port = util.get_unused_port()
         self.primary_server = PrimaryServerInstance(self.port)
         util.handshake(self.role, self.port)
-        print("Handshake with primary server complete", flush=True)
+        myprint(Verbosity.all, "Handshake with primary server complete")
 
         if len(self.clients) > 0 and not self.clients[-1].active_timestamp:
             self.clients = self.clients[:-1]
             
-        self.update_client_connections()
-        for c in self.clients: 
+        for c in self.clients:
+            c.shake_hands(self.role, self.output_folder)
             c.engine = None
             c.received_ids = []
-            c.init_files(self.output_folder)
-
     
     def assume_primary_role(self):
         """
@@ -162,7 +165,22 @@ class Server():
         self.backup_server = None
         self.init_handshake_q()
         for c in self.clients: c.engine = self.engine
-        
+    
+    def handle_primary_server_failure(self):
+        myprint(Verbosity.all, "Handling primary server failure")
+        self.assume_primary_role()
+        for c in self.clients:
+            if not c.active_timestamp: continue
+            temp = c.outbound_q
+            try:
+                c.outbound_q, = util.get_guest_qs(
+                    c.ip, c.port, ['from_primary_q'])
+            except:
+                myprint(Verbosity.all, 
+                        "Temporary connection to from_primary_q failed")
+            self.message_to_instance(c, MessageType.SWAP_QUEUES, None)
+            c.outbound_q = temp
+            c.engine = self.engine
 #endregion ROLES
 
 #region INSTANCES
@@ -175,22 +193,21 @@ class Server():
     def handshake_from_client(self, name, port):
         client = self.get_client(name)
         if not client:
-            print(f"Unknown client {name} tried to connect",
-                    file=sys.stderr, flush=True)
+            myprint(Verbosity.all, f"Unknown client {name} tried to connect")
             return
         client.port = port
         client.shake_hands(self.role, self.output_folder)
 
         # inform the backup server
-        print(f"Informing backup server of {client.name}", flush=True)
+        myprint(Verbosity.all, f"Informing backup server of {client.name}")
         self.message_to_instance(
             self.backup_server, MessageType.NEW_CLIENT, 
                 (client.name, client.ip, client.port, client.active_timestamp))
     
     def handshake_from_backup(self, name, port):
         if name != self.backup_server.name:
-            print(f"Unknown backup server {name} tried to connect",
-                  file=sys.stderr, flush=True)
+            myprint(Verbosity.all, 
+                    f"Unknown backup server {name} tried to connect")
             return
         self.backup_server.port = port
         self.backup_server.shake_hands()
@@ -229,6 +246,9 @@ class Server():
             self.backup_server = None
             self.stop_clients()
             return
+        if is_primary(instance):
+            self.handle_primary_server_failure()
+            return
         assert(False)
     
     def create_backup_server_instance(self):
@@ -243,7 +263,9 @@ class Server():
                 if not c.active_timestamp: continue
                 client_files.append((c.events_file, c.exceptions_file))
                 c.events_file, c.exceptions_file = None, None
-            with open(util.pickled_file_name(), 'wb') as f:
+            with open(util.pickled_file_name(self.output_folder), 'wb') as f:
+                myprint(Verbosity.instance_creation_etc, 
+                        f"At pickle: to_client_id={self.to_client_id}")
                 pickle.dump(self, f)
             self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
                 temp_handshake_manager, temp_handhsake_q, temp_results_file, temp_backup_server
@@ -275,6 +297,8 @@ class Server():
         if not self.backup_server:
             self.backup_server = BackupServerInstance(self.engine)
             self.backup_server_has_been_run = False
+            myprint(Verbosity.all, 
+                    f"Created instance object for {self.backup_server.name}")
             return
 
         assert(self.backup_server)
@@ -295,9 +319,9 @@ class Server():
 
         # Make a client if all existing clients have ip
         if len(self.clients) == 0 or self.clients[-1].ip:
-            print("creating instance object", flush=True)
-            self.clients.append(
-                ClientInstance(self.engine, self.tasks_from_failed))
+            client = ClientInstance(self.engine, self.tasks_from_failed)
+            self.clients.append(client)
+            myprint(Verbosity.all, f"Created instance object for {client.name}")
         client = self.clients[-1]
         if not client.ip: client.create()
         if client.ip: client.run(self.port, self.max_cpus_per_client)
@@ -314,20 +338,7 @@ class Server():
     def kill_unhealthy_instances(self):
         if self.is_backup():
             if not self.primary_server.is_healthy():
-                print("Primary server failed", flush=True)
-                self.assume_primary_role()
-                for c in self.clients:
-                    temp = c.outbound_q
-                    try:
-                        c.outbound_q = util.get_guest_qs(
-                            c.ip, c.port, ['from_primary_q'])
-                    except:
-                        print("Temporary connection to from_primary_q failed",
-                              flush=True)
-                    self.message_to_instance(c, MessageType.SWAP_QUEUES, None)
-                    c.outbound_q = temp
-                    c.engine = self.engine
-                    
+                self.handle_primary_server_failure()     
             return
         
         assert(self.is_primary())
@@ -336,7 +347,7 @@ class Server():
             if c.is_healthy(tasks_remain): continue
             self.kill_client(c.name)
             self.message_to_instance(
-                self.backup_server, MessageType.CLIENT_FAILURE, c.name)
+                self.backup_server, MessageType.CLIENT_TERMINATED, c.name)
         
         if self.backup_server and \
            not self.backup_server.is_healthy(tasks_remain):
@@ -351,11 +362,6 @@ class Server():
         for c in self.clients:
             self.message_to_instance(c, MessageType.RESUME, None)
         self.clients_stopped_timestamp = None
-
-    def update_client_connections(self):
-        for c in self.clients:
-            if not c.active_timestamp: continue
-            c.connect(self.role)
 
     def send_health_update(self):
         """
@@ -378,13 +384,15 @@ class Server():
             if is_client(instance) and \
                type not in [MessageType.STOP, MessageType.RESUME]:
                 message = (self.to_client_id,) + message
-                print(f"Sending message {self.to_client_id} ({type}) to {instance.name}", flush=True)
+                myprint(Verbosity.messages, 
+                        f"Sending message {self.to_client_id} ({type}) to {instance.name}")
                 self.to_client_id += 1
             else:
                 message = (None,) + message
             instance.outbound_q.put(message)
         except:
-            print(f"Instance {instance.name} failed", flush=True)
+            myprint(Verbosity.all, f"Sending to {instance.name} failed")
+            myprint(Verbosity.failure_traceback, traceback.format_exc())
             self.kill_instance(instance)
 
     def messages_waiting(self, instance):
@@ -402,12 +410,10 @@ class Server():
             assert(self.is_backup())
             if not is_client(instance): return True
             if not instance.received_ids: return False
-            id = instance.inbound_q.queue[0][0]
-            received_id = instance.received_ids.pop(0)
-            assert(id == received_id)
             return True
         except:
-            print(f"Instance {instance.name} failed", flush=True)
+            myprint(Verbosity.all, f"Listening to {instance.name} failed")
+            myprint(Verbosity.failure_traceback, traceback.format_exc())
             self.kill_instance(instance)
 
     def forward_message(self, instance, message_id, type, body):
@@ -415,7 +421,6 @@ class Server():
         Forward messages from clients except health updates to backup server.
         """
         if instance.role != InstanceRole.CLIENT: return
-        if type == MessageType.HEALTH_UPDATE: return
         self.message_to_instance(
             self.backup_server, MessageType.MESSAGE_FROM_CLIENT, 
             (instance.name, message_id, type, body))
@@ -436,7 +441,7 @@ class Server():
             else:
                 self.next_task += 1
             if self.is_hard(task.hardness):
-                print(f"Skipping hard task {task.id}", flush=True)
+                myprint(Verbosity.all, f"Skipping hard task {task.id}")
                 continue
             tasks.append(task)
             n -= 1
@@ -459,8 +464,7 @@ class Server():
 
     def process_result(self, client, body):
         id, result = body
-        print(f"Client {client.name} - result for task {id}", 
-              flush=True)
+        myprint(Verbosity.all, f"Client {client.name} - result for task {id}")
         client.unregister_task(id)
         task = self.tasks[id]
         task.result = result
@@ -482,23 +486,27 @@ class Server():
 
     def process_bye(self, client, _body):
         assert(is_client(client))
-        print(f"Got bye from {client.name}; {len(client.my_tasks)} registered tasks remain", flush=True)
+        myprint(Verbosity.all, 
+                f"Got bye from {client.name}; {len(client.my_tasks)} registered tasks remain")
         self.kill_instance(client)
 
     def process_new_client(self, _instance, body):
         assert(self.is_backup())
+        self.engine.next_instance_name(InstanceRole.CLIENT)
         client = ClientInstance(None, self.tasks_from_failed)
         client.name, client.ip, client.port, client.active_timestamp = body
-        print(f"New {client.name}", flush=True)
+        myprint(Verbosity.all, f"New {client.name}")
         client.shake_hands(self.role, self.output_folder)
         self.clients.append(client)
 
-    def process_client_failure(self, _instance, name):
+    def process_client_terminated(self, _instance, client_name):
         """
         Process client failure reported by the primary server.
         """
         assert(self.is_backup())
-        self.kill_client(name)
+        myprint(Verbosity.all, 
+                f"Client {client_name} was terminated by primary server")
+        self.kill_client(client_name)
 
     def process_message(self, instance, type, body):
         {
@@ -511,7 +519,7 @@ class Server():
         MessageType.BYE: self.process_bye,
 
         MessageType.NEW_CLIENT: self.process_new_client,
-        MessageType.CLIENT_FAILURE: self.process_client_failure,
+        MessageType.CLIENT_TERMINATED: self.process_client_terminated,
         } [type](instance, body)
 
     def handle_messages(self):
@@ -523,16 +531,26 @@ class Server():
             
             while self.messages_waiting(instance):
                 message_id, type, body = instance.inbound_q.get_nowait()
-                #if type != MessageType.HEALTH_UPDATE: print(f"Got {message_id} of type {type} from {instance.role}", flush=True)
+                
+                myprint(type != MessageType.HEALTH_UPDATE and \
+                        Verbosity.all_non_health_messages, 
+                        f"Got {message_id} of type {type} from {instance.role}")
                 if self.is_primary():
                     if is_client(instance):
-                        #print(f"Handling message {message_id} ({type}) from {instance.name}", flush=True)
-                        self.forward_message(instance, message_id, type, body)
+                        if type != MessageType.HEALTH_UPDATE:
+                            myprint(Verbosity.messages, 
+                                    f"Handling message {message_id} ({type}) from {instance.name}")
+                            self.forward_message(instance, message_id, type, body)
                     self.process_message(instance, type, body)
                     continue
 
                 assert(self.is_backup())
-                if is_client(instance):
+                if is_client(instance): 
+                    if type != MessageType.HEALTH_UPDATE:
+                        received_id = instance.received_ids.pop(0)
+                        myprint(Verbosity.message_sync, 
+                                f"{instance.name}   {type}   {body}   message_id={message_id}   received_id={received_id}")
+                        assert(message_id == received_id)
                     continue
 
                 assert(is_primary(instance))
@@ -543,9 +561,13 @@ class Server():
                 assert(type == MessageType.MESSAGE_FROM_CLIENT)
                 name, orig_id, message_type, message_body = body
                 client = self.get_client(name)
-                assert(client)
-                
-                #print(f"Handling message {orig_id} ({message_type}) from {client.name}", flush=True)
+                if not client:
+                    myprint(Verbosity.all, 
+                            f"The instance object {name} does not exist anymore")
+                    return
+
+                myprint(Verbosity.messages, 
+                        f"Handling message {orig_id} ({message_type}) from {client.name}")
                 client.received_ids.append(orig_id)
                 self.process_message(client, message_type, message_body)
 

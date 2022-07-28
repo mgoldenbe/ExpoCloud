@@ -1,8 +1,12 @@
 # Adapted from https://cloud.google.com/compute/docs/reference/rest/beta/instances/insert
 
-from pprint import pprint
 from sys import stderr
 
+from src.util import myprint
+from src.constants import Verbosity
+
+from src import util
+from src.util import InstanceRole, next_instance_name
 from src.abstract_engine import AbstractEngine
 from src.util import handle_exception
 
@@ -10,7 +14,7 @@ try:
     from googleapiclient import discovery
     from oauth2client.client import GoogleCredentials
 except:
-    print('It looks like you are not on GCE', file=stderr, flush=True)
+    myprint(Verbosity.all, 'It looks like you are not on GCE')
     exit(1)
 import time
 
@@ -59,7 +63,7 @@ class GCE(AbstractEngine):
         """
         Kills the specified instance.
         """
-        # print("Instance killing is disabled", flush=True)
+        #myprint(Verbosity.all, "Instance killing is disabled")
         # return
         credentials = GoogleCredentials.get_application_default()
         service = discovery.build('compute', 'beta', credentials=credentials)
@@ -89,8 +93,8 @@ class GCE(AbstractEngine):
                 response = request.execute()
                 if response['status'] == 'RUNNING': break
                 if response['status'] == 'STOPPING':
-                    print("It looks like this creation attempt was too early", 
-                          file = stderr, flush=True)
+                    myprint(Verbosity.instance_creation_etc, 
+                            "It looks like this creation attempt was too early")
                     return None
                 time.sleep(5)
             return response['networkInterfaces'][0]['networkIP']

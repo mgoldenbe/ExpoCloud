@@ -3,6 +3,10 @@
 import time
 import os
 import sys
+
+from src.util import myprint
+from src.constants import Verbosity
+
 from src import util
 from src.util import InstanceRole, handle_exception
 from src.constants import Constants
@@ -43,8 +47,6 @@ class Instance():
     
     def __del__(self):
         if self.ip and self.engine:
-            print(f"The {self.role} {self.name} is being killed", 
-                file=sys.stderr, flush=True)
             if not self.engine.is_local(): # for local, just let it complete
                 self.engine.kill_instance(self.name)
     
@@ -57,29 +59,34 @@ class Instance():
         - It is active and HEALTH_UPDATE_LIMIT has not passed since last health 
           update.
         """
-        if (not self.ip) and tasks_remain: return True
-
-        if self.ip and (not self.active_timestamp) and \
-           (tasks_remain or is_backup(self)):
-            if time.time() - self.creation_timestamp <= \
-               Constants.INSTANCE_MAX_NON_ACTIVE_TIME: return True
-
         if self.active_timestamp:
-            if time.time() - self.active_timestamp <= \
-               Constants.HEALTH_UPDATE_LIMIT: return True
+            result = \
+                time.time() - self.active_timestamp <= \
+                Constants.HEALTH_UPDATE_LIMIT
+            if not result: 
+                myprint(Verbosity.all, 
+                        f"{self.name} failed to send health updates for too long.   Last update: {util.short_timestamp(self.active_timestamp)}")
+            return result
+        
+        assert(not self.active_timestamp)
 
-        if self.active_timestamp or (is_client(self) and tasks_remain):
-            print(f"{self.name} is unhealthy", file=sys.stderr, flush=True)
-            print(f"Created {self.creation_timestamp}",
-                  f"last healthy {self.active_timestamp}", 
-                  file=sys.stderr, flush=True)
-        else:
-            print(f"Inactive {self.name}", 
-                  file=sys.stderr, flush=True)
-        return False
+        if self.ip and \
+           time.time() - self.creation_timestamp > \
+           Constants.INSTANCE_MAX_NON_ACTIVE_TIME:
+            myprint(Verbosity.all, f"{self.name} failed to shake hands for too long.   Creation: {util.short_timestamp(self.creation_timestamp)}") 
+            return False
+        
+        if is_backup(self): return True
+        if is_client(self):
+            result = tasks_remain
+            if not result:
+                myprint(Verbosity.all, f"{self.name} is unneeded")
+            return result
+
+        assert(False)
 
     def shake_hands(self):
-        print(f"{self.name} shook hands", flush=True)
+        myprint(Verbosity.all, f"{self.name} shook hands")
         self.active_timestamp = time.time()
 
 class ClientInstance(Instance):
@@ -128,16 +135,18 @@ class ClientInstance(Instance):
         self.exceptions_file = open(os.path.join(path, 'exceptions.txt'), "a")
         
     def shake_hands(self, server_role, parent_dir: str):
-        print(f"{server_role} attempting to connect to client queues", flush=True)
+        myprint(Verbosity.instance_creation_etc, 
+                f"{server_role} attempting to connect to client queues")
         self.connect(server_role)
-        print(f"{server_role} connected to client queues", flush=True)
+        myprint(Verbosity.instance_creation_etc,
+                f"{server_role} connected to client queues")
         self.init_files(parent_dir)
         super().shake_hands()
 
     def register_tasks(self, tasks):
         self.my_tasks += [t.id for t in tasks]
         for t in tasks:
-            print(f"Task {t.id} is registered with {self.name}")
+            myprint(Verbosity.all, f"Task {t.id} is at {self.name}")
     
     def unregister_task(self, t_id):
         self.my_tasks = list(filter(lambda i: i != t_id, self.my_tasks))
@@ -170,6 +179,7 @@ class PrimaryServerInstance:
     def __init__(self, my_port):
         self.role = InstanceRole.PRIMARY_SERVER
         self.ip = util.command_arg_ip()
+        self.name = 'primary-server'
         self.manager = util.make_manager(
             ['to_primary_q', 'from_primary_q'], my_port)
         self.outbound_q, self.inbound_q = \

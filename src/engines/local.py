@@ -2,10 +2,16 @@ import subprocess
 import psutil
 import time
 from sys import stderr
+
+from src.util import myprint
+from src.constants import Verbosity
+
 from src import util
 from src.util import InstanceRole, next_instance_name
 
 class LocalEngine:
+    TIME_BETWEEN_INSTANCES = 10
+
     """
     The engine representing the local machine.
     """
@@ -16,19 +22,19 @@ class LocalEngine:
         self.root_folder = util.get_project_root()
         self.project_folder = project_folder
         self.last_instance_timestamp = 0
-        self.time_between_instances = 10
         self.name_to_pid = {}
+        self.instance_id = {} # role->id, used to compute next instance name
     
     def is_local(self): return True
 
     # For compatibility
     def next_instance_name(self, type):
-        return next_instance_name(type, "")
+        return next_instance_name(type, "", self.instance_id)
 
     # For compatibility
     def create_instance(self, _name, _role):
         if time.time() - self.last_instance_timestamp <= \
-           self.time_between_instances: 
+           self.TIME_BETWEEN_INSTANCES: 
            return None
         self.last_instance_timestamp = time.time()
         return util.my_ip()
@@ -42,26 +48,28 @@ class LocalEngine:
             util.my_ip(), str(server_port), name
         ]
         if role == InstanceRole.CLIENT: args.append(str(max_cpus))
+        myprint(Verbosity.command_lines, f"Args for running instance:\n{args}")
 
         with open(f"out-{name}", 'a') as out, open(f"err-{name}", 'a') as err:
             pid = \
                 subprocess.Popen(args, stdout=out, stderr=err, shell=False).pid
-            print(f"Created process {pid}")
+            myprint(Verbosity.all, f"Created process {pid}")
             self.name_to_pid[name] = pid
 
     def kill_instance(self, name):
         # Process tree with full commands: ps auxfww
         time.sleep(2) # Give it time to shut shown
         pid = self.name_to_pid[name]
-        print(f"Terminating process {pid}")
+        myprint(Verbosity.all, f"Terminating process {pid}")
         try:
             proc = psutil.Process(pid)
         except:
-            print("It's dead already", flush=True)
+            myprint(Verbosity.all, f"Process {pid} is dead already")
             return
         proc.terminate()
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            print(f"Process {pid} did not terminate in time, killing it")
+            myprint(Verbosity.all, 
+                    f"Process {pid} did not terminate in time, killing it")
             proc.kill()

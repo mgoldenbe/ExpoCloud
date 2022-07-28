@@ -5,17 +5,33 @@ except:
     pass
 
 import os
+from sre_parse import Verbose
 import subprocess
 import sys
 import time
 import socket
+import queue
 from pathlib import Path
 import traceback
 from typing import Tuple
 
-from src.constants import Constants
+from src.constants import Constants, Verbosity
 from multiprocessing import Queue
 from multiprocessing.managers import SyncManager
+
+def short_timestamp(timestamp):
+    return f"{timestamp % 10000 : .3f}"
+    
+def short_now_str():
+    return short_timestamp(time.time())
+
+def myprint(cond, str, err_flag = False):
+    file = sys.stderr if err_flag else sys.stdout
+    if cond: 
+        print(f"{short_now_str()}   {str}", file=file, flush=True)
+
+def myeprint(cond, str):
+    myprint(cond, str, True)
 
 def command_arg_ip():
     try:
@@ -61,7 +77,7 @@ class MessageType:
 
     # from primary to backup server
     NEW_CLIENT = 'NEW_CLIENT'
-    CLIENT_FAILURE = 'CLIENT_FAILURE'
+    CLIENT_TERMINATED = 'CLIENT_TERMINATED'
     MESSAGE_FROM_CLIENT = 'MESSAGE_FROM_CLIENT'
 
     # to client
@@ -82,9 +98,7 @@ def get_unused_port():
         s.bind(('',0))
         return s.getsockname()[1]
 
-instance_id = {} # role->id
-def next_instance_name(role, prefix):
-    global instance_id
+def next_instance_name(role, prefix, instance_id):
     if role not in instance_id: instance_id[role] = 0
     instance_id[role] += 1
     id = instance_id[role]
@@ -112,7 +126,7 @@ def make_manager(q_names, port):
     class MyManager(SyncManager):
         pass
     for q_name in q_names:
-        q = Queue()
+        q = queue.Queue()
         MyManager.register(q_name, callable=lambda q=q: q)
 
     auth = b'myauth'
@@ -147,7 +161,7 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
     if to_primary_q:
         to_primary_q.put((MessageType.EXCEPTION, descr))
     else:
-        print(descr, file=sys.stderr, flush=True)
+        myeprint(Verbosity.all, descr)
     if exit_flag: exit(1)
 
 # Adapted from https://stackoverflow.com/a/53465812/2725810
@@ -164,8 +178,8 @@ def output_folder(instance_name = None):
     if not instance_name: instance_name = my_name()
     return f"output-{instance_name}"
 
-def pickled_file_name(instance_name = None):
-    return os.path.join(output_folder(instance_name), 'pickled')
+def pickled_file_name(path):
+    return os.path.join(path, 'pickled')
 
 def ssh_command(ip, command):
     key = '~/.ssh/id_rsa'
@@ -176,7 +190,6 @@ def scp_command(ip, source_folder, dest_folder):
     return f"scp -i {key} -o StrictHostKeyChecking=no -r {source_folder} {ip}:{dest_folder} 2>> ssh_err"
 
 def attempt_command(command, n_attempts = 3):
-    print(command, flush=True)
     attempts_left = 3
     while attempts_left:
         try:
@@ -186,8 +199,7 @@ def attempt_command(command, n_attempts = 3):
             attempts_left -= 1
             time.sleep(Constants.SSH_RETRY_DELAY)
 
-    print(f"Failed to execute command", 
-          file = sys.stderr, flush = True)
+    myprint(Verbosity.shell_command, f"Failed to execute {command}")
     return None
 
 def remote_execute(ip, command):

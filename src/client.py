@@ -8,6 +8,9 @@ from multiprocessing.managers import SyncManager
 
 from pkg_resources import working_set
 
+from src.util import myprint
+from src.constants import Verbosity
+
 from src import util
 from src.util import InstanceRole, MessageType
 from src.constants import Constants
@@ -27,7 +30,7 @@ class Worker(Process):
         self.kill()
 
     def run(self):
-        print(f"Worker {self.id} with {self.task.id}", flush=True)
+        myprint(Verbosity.workers, f"Worker {self.id} with {self.task.id}")
         self.timestamp.value = time.time()
         self.queue.put((MessageType.WORKER_STARTED, None))
         result = self.task.run()
@@ -86,7 +89,7 @@ class Client:
         """
         try:
             self.to_primary_q.put((self.message_id, type, body))
-            #self.to_backup_q.put((self.message_id, type, body))
+            self.to_backup_q.put((self.message_id, type, body))
             self.message_id += 1
         except Exception as e:
             pass # server failure is handled elsewhere
@@ -137,22 +140,31 @@ class Client:
 
     def process_resume(self, _body):
         self.stopped_flag = False
-        print(f"Removing received_ids: {self.received_ids}", flush=True)
+        myprint(Verbosity.message_sync,
+                f"Removing received_ids: {self.received_ids}")
         self.received_ids = []
         assert(self.pass_received_ids == 0)
         self.pass_received_ids = self.from_primary_q.qsize()
-        print(f"Will pass {self.pass_received_ids} ids: {[self.from_primary_q.queue[i][0] for i in range(self.pass_received_ids)]}", flush=True)
+        myprint(Verbosity.message_sync,
+                f"Will pass {self.pass_received_ids} ids: {[self.from_primary_q.queue[i][0] for i in range(self.pass_received_ids)]}")
 
     def process_swap_queues(self, _body):
         self.to_primary_q, self.to_backup_q = \
             self.to_backup_q, self.to_primary_q
         self.from_primary_q, self.from_backup_q = \
             self.from_backup_q, self.from_primary_q
+        
+        self.manager.to_primary_q, self.manager.to_backup_q = \
+            self.manager.to_backup_q, self.manager.to_primary_q
+        self.manager.from_primary_q, self.manager.from_backup_q = \
+            self.manager.from_backup_q, self.manager.from_primary_q
+            
+        myprint(True, f"After swap: {self.from_backup_q} {self.manager.from_backup_q()}")
 
     def process_messages(self):
         while not self.from_primary_q.empty():
             id, type, body = self.from_primary_q.get_nowait()
-            print(f"Primary server sent {id} {type}", flush=True)
+            myprint(Verbosity.messages, f"Primary server sent {id} {type}")
             {MessageType.GRANT_TASKS: self.process_grant_tasks,
              MessageType.APPLY_DOMINO_EFFECT: self.apply_domino_effect,
              MessageType.NO_FURTHER_TASKS: self.process_no_further_tasks,
@@ -165,15 +177,19 @@ class Client:
             assert(self.pass_received_ids >= 0)
             if id:
                 if self.pass_received_ids:
-                    print(f"Not appending into received_ids (self.pass_received_ids={self.pass_received_ids})", flush=True)
+                    myprint(Verbosity.message_sync,
+                            f"Not appending into received_ids (self.pass_received_ids={self.pass_received_ids})")
                     self.pass_received_ids -= 1
                 else:
                     self.received_ids.append(id)                
         
         while self.received_ids and not self.from_backup_q.empty():
-            id, type, _body = self.from_backup_q.get_nowait()
-            print(f"Backup server sent {id} {type}", flush=True)
+            id, type, body = self.from_backup_q.get_nowait()
+            myprint(Verbosity.messages, 
+                    f"Backup server sent {id} {type}: {body}")
             received_id = self.received_ids.pop(0)
+            myprint(Verbosity.message_sync, 
+                    f"Primary server had sent received_id={received_id}")
             assert(id == received_id)
     
     #endregion PROCESSING MESSAGES FROM PRIMARY SERVER
@@ -243,7 +259,7 @@ class Client:
             worker.start()
 
     def run(self):
-        print("Starting...", flush=True)
+        myprint(Verbosity.all, "Starting...")
         while self.tasks or not self.no_further_tasks:
             self.health_update()
             if not self.stopped_flag:
@@ -256,14 +272,14 @@ class Client:
             self.occupy_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
 
-        print("Waiting for workers to complete...", flush=True)
+        myprint(Verbosity.all, "Waiting for workers to complete...")
         while self.workers:
             self.health_update()
             self.process_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
 
-        print("Sending BYE", flush=True)       
+        myprint(Verbosity.all, "Sending BYE")       
         self.message_to_servers(MessageType.BYE, None)
         time.sleep(Constants.CLIENT_WAIT_AFTER_SENDING_BYE) 
         self.manager.shutdown()
-        print("Done", flush=True)
+        myprint(Verbosity.all, "Done")

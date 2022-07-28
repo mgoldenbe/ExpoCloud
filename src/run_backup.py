@@ -1,14 +1,22 @@
 from src.constants import Constants
 import multiprocessing
 import pickle
+
+from src.util import myprint
+from src.constants import Verbosity
+
 from src import util
 import time
 
-print("Running backup server", flush=True)
-with open(util.pickled_file_name(util.command_arg_name()), 'rb') as f:
+myprint(Verbosity.all, "Running backup server")
+path = util.output_folder(util.command_arg_name())
+with open(util.pickled_file_name(path), 'rb') as f:
     multiprocessing.current_process().authkey = b'myauth'
     backup = pickle.load(f)
-    print("Unpickled the server object", flush=True)
+    myprint(Verbosity.all, "Unpickled the server object")
+    
 backup.assume_backup_role()
-print("Assumed backup server role", flush=True)
+myprint(Verbosity.all, "Assumed backup server role")
+myprint(Verbosity.instance_creation_etc, 
+        f"to_client_id={backup.to_client_id}")
 backup.run()

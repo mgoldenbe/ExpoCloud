@@ -1,7 +1,6 @@
 # Adapted from https://cloud.google.com/compute/docs/reference/rest/beta/instances/insert
 
 from dis import Instruction
-from pprint import pprint
 
 from googleapiclient import discovery
 from oauth2client.client import GoogleCredentials
