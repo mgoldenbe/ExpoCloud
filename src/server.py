@@ -174,11 +174,12 @@ class Server():
             temp = c.outbound_q
             try:
                 c.outbound_q, = util.get_guest_qs(
-                    c.ip, c.port, ['from_primary_q'])
+                    c.ip, c.port_primary, ['inbound'])
             except:
                 myprint(Verbosity.all, 
                         "Temporary connection to from_primary_q failed")
             self.message_to_instance(c, MessageType.SWAP_QUEUES, None)
+            c.port_primary, c.port_backup = c.port_backup, c.port_primary
             c.outbound_q = temp
             c.engine = self.engine
 #endregion ROLES
@@ -190,19 +191,20 @@ class Server():
             util.make_manager(['handshake_q'], self.port)
         self.handshake_q = self.handshake_manager.handshake_q()
 
-    def handshake_from_client(self, name, port):
+    def handshake_from_client(self, name, port_primary, port_backup):
         client = self.get_client(name)
         if not client:
             myprint(Verbosity.all, f"Unknown client {name} tried to connect")
             return
-        client.port = port
+        client.port_primary, client.port_backup = port_primary, port_backup
         client.shake_hands(self.role, self.output_folder)
 
         # inform the backup server
         myprint(Verbosity.all, f"Informing backup server of {client.name}")
         self.message_to_instance(
             self.backup_server, MessageType.NEW_CLIENT, 
-                (client.name, client.ip, client.port, client.active_timestamp))
+                (client.name, client.ip, 
+                 port_primary, port_backup, client.active_timestamp))
     
     def handshake_from_backup(self, name, port):
         if name != self.backup_server.name:
@@ -215,15 +217,23 @@ class Server():
 
     def accept_handshakes(self):
         while not self.handshake_q.empty():
-            role, name, port = self.handshake_q.get_nowait()
-            assert(role == InstanceRole.CLIENT or 
-                   role == InstanceRole.BACKUP_SERVER)
-            if role == InstanceRole.CLIENT and self.clients_stopped_timestamp:
-                self.handshake_q.put((role, name, port))
+            body = self.handshake_q.get_nowait()
+            role, rest = body[0], body[1:]
+            
+            if role == InstanceRole.CLIENT:
+                if self.clients_stopped_timestamp:
+                    self.handshake_q.put(body)
+                    continue
+                name, port_primary, port_backup = rest
+                self.handshake_from_client(name, port_primary, port_backup)
                 continue
-            {InstanceRole.CLIENT: self.handshake_from_client,
-             InstanceRole.BACKUP_SERVER: self.handshake_from_backup} \
-             [role](name, port)
+
+            if role == InstanceRole.BACKUP_SERVER:
+                name, port = rest
+                self.handshake_from_backup(name, port)
+                continue
+
+            assert(False)
 
     def n_active_clients(self):
         return len(list(filter(lambda c: c.active_timestamp, self.clients)))
@@ -494,7 +504,8 @@ class Server():
         assert(self.is_backup())
         self.engine.next_instance_name(InstanceRole.CLIENT)
         client = ClientInstance(None, self.tasks_from_failed)
-        client.name, client.ip, client.port, client.active_timestamp = body
+        client.name, client.ip, client.port_primary, client.port_backup, \
+            client.active_timestamp = body
         myprint(Verbosity.all, f"New {client.name}")
         client.shake_hands(self.role, self.output_folder)
         self.clients.append(client)
@@ -547,10 +558,13 @@ class Server():
                 assert(self.is_backup())
                 if is_client(instance): 
                     if type != MessageType.HEALTH_UPDATE:
-                        received_id = instance.received_ids.pop(0)
-                        myprint(Verbosity.message_sync, 
-                                f"{instance.name}   {type}   {body}   message_id={message_id}   received_id={received_id}")
-                        assert(message_id == received_id)
+                        received_id = instance.received_ids[0]
+                        if received_id == message_id: 
+                            instance.received_ids.pop(0)
+                        if message_id > received_id:
+                            myprint(Verbosity.all, 
+                                    f"{instance.name}   {type}   {body}   message_id={message_id}   received_id={received_id}")
+                            assert(False)
                     continue
 
                 assert(is_primary(instance))

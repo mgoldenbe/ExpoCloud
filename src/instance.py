@@ -119,12 +119,14 @@ class ClientInstance(Instance):
             if server_role == InstanceRole.PRIMARY_SERVER:
                 self.inbound_q, self.outbound_q = \
                     util.get_guest_qs(
-                        self.ip, self.port, ['to_primary_q', 'from_primary_q'])
+                        self.ip, self.port_primary, 
+                        ['outbound', 'inbound'])
             else:
                 assert(server_role == InstanceRole.BACKUP_SERVER)
                 self.inbound_q, self.outbound_q = \
                     util.get_guest_qs(
-                        self.ip, self.port, ['to_backup_q', 'from_backup_q'])
+                        self.ip, self.port_backup, 
+                        ['outbound', 'inbound'])
         except:
             pass # if the client has died, it will be handled elsewhere
 

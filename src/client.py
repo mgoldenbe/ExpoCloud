@@ -59,19 +59,23 @@ class Client:
         self.no_further_tasks = False # True - no more tasks at the server
         self.capacity = min(cpu_count(), util.command_arg_max_cpus())
 
-        self.port = util.get_unused_port()
-        self.manager = util.make_manager(
-            ['to_primary_q', 'from_primary_q', 
-             'to_backup_q', 'from_backup_q'], self.port)
+        self.port_primary = util.get_unused_port()
+        self.manager_primary = util.make_manager(
+            ['outbound', 'inbound'], self.port_primary)
+        self.port_backup = util.get_unused_port()
+        self.manager_backup = util.make_manager(
+            ['outbound', 'inbound'], self.port_backup)
+
         self.to_primary_q, self.from_primary_q, \
         self.to_backup_q, self.from_backup_q = \
-            self.manager.to_primary_q(), \
-            self.manager.from_primary_q(), \
-            self.manager.to_backup_q(), \
-            self.manager.from_backup_q()
+            self.manager_primary.outbound(), \
+            self.manager_primary.inbound(), \
+            self.manager_backup.outbound(), \
+            self.manager_backup.inbound()
 
         self.message_id = 0 # id of the next message
-        util.handshake(InstanceRole.CLIENT, self.port)
+        util.handshake(
+            InstanceRole.CLIENT, self.port_primary, self.port_backup)
         self.last_health_update = time.time()
 
         self.stopped_flag = False
@@ -154,12 +158,10 @@ class Client:
         self.from_primary_q, self.from_backup_q = \
             self.from_backup_q, self.from_primary_q
         
-        self.manager.to_primary_q, self.manager.to_backup_q = \
-            self.manager.to_backup_q, self.manager.to_primary_q
-        self.manager.from_primary_q, self.manager.from_backup_q = \
-            self.manager.from_backup_q, self.manager.from_primary_q
-            
-        myprint(True, f"After swap: {self.from_backup_q} {self.manager.from_backup_q()}")
+        self.port_primary, self.port_backup = \
+            self.port_backup, self.port_primary
+        self.manager_primary, self.manager_backup = \
+            self.manager_backup, self.manager_primary
 
     def process_messages(self):
         while not self.from_primary_q.empty():
@@ -281,5 +283,6 @@ class Client:
         myprint(Verbosity.all, "Sending BYE")       
         self.message_to_servers(MessageType.BYE, None)
         time.sleep(Constants.CLIENT_WAIT_AFTER_SENDING_BYE) 
-        self.manager.shutdown()
+        self.manager_primary.shutdown()
+        self.manager_backup.shutdown()
         myprint(Verbosity.all, "Done")

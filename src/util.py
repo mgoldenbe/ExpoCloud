@@ -138,7 +138,7 @@ def make_manager(q_names, port):
 
     return manager
 
-def handshake(my_role, my_port):
+def handshake(my_role, my_port1, my_port2 = None):
     server_ip = command_arg_ip()
     server_port = command_arg_port()
     my_name = command_arg_name()
@@ -146,7 +146,9 @@ def handshake(my_role, my_port):
     try:
         handshake_q, = get_guest_qs(
             server_ip, server_port, ['handshake_q'])
-        handshake_q.put((my_role, my_name, my_port))
+        body = (my_role, my_name, my_port1)
+        if my_port2: body += (my_port2,)
+        handshake_q.put(body)
     except Exception as e:
         handle_exception(e, 'Handshake with the server failed')
 
