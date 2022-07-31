@@ -94,7 +94,7 @@ class GCE(AbstractEngine):
                 if response['status'] == 'RUNNING': break
                 if response['status'] == 'STOPPING':
                     myprint(Verbosity.instance_creation_etc, 
-                            "It looks like this creation attempt was too early")
+                            f"The attempt to create {name} was too early")
                     return None
                 time.sleep(5)
             return response['networkInterfaces'][0]['networkIP']

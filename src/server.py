@@ -54,8 +54,6 @@ class Server():
         
         self.output_folder = util.output_folder()
         os.makedirs(self.output_folder, exist_ok=True)
-        self.results_file = \
-            open(os.path.join(self.output_folder, 'results.txt'), "w")
         
         self.primary_server = None
         self.backup_server = None
@@ -63,7 +61,6 @@ class Server():
         
     def __del__(self):
         myprint(Verbosity.all, "Shutting down")
-        self.results_file.close()
         if self.is_primary():
             self.handshake_manager.shutdown()
 
@@ -73,17 +70,21 @@ class Server():
                     f"Got {len(self.tasks)} tasks and ready for clients")
 
         try:
-            while self.tasks_remain() or self.clients:
+            printed_results = False
+            while True:
                 self.send_health_update()
                 if self.is_primary(): self.accept_handshakes()
                 self.handle_messages()
                 if self.is_primary(): self.create_instance()
                 self.kill_unhealthy_instances()
+                if not printed_results:
+                    if not (self.tasks_remain() or self.clients):
+                        self.print_results()
+                        printed_results = True
                 time.sleep(Constants.SERVER_CYCLE_WAIT)
         except Exception as e:
             handle_exception(e, "Exception in Server.run")
         
-        self.print_results()
 
 #region TASKS
 
@@ -105,6 +106,7 @@ class Server():
         """
         Restore the original order of tasks and print results.
         """
+        myprint(Verbosity.all, "Printing results")
         group_counts = {}
         for t in self.tasks:
             group = t.group_parameters()
@@ -112,14 +114,20 @@ class Server():
             group_counts[group] += 1
 
         self.tasks.sort(key = lambda t: t.orig_id)
+
+        results_file = \
+            open(os.path.join(self.output_folder, 'results.txt'), "w")
         print(util.tuple_to_csv(self.tasks[0].parameter_titles() + \
                                 self.tasks[0].result_titles()),
-              file = self.results_file)
+              file = results_file)
         for t in self.tasks:
             if not t.result: continue
             if group_counts[t.group_parameters()] >= self.min_group_size:
                 print(util.tuple_to_csv(t.parameters() + t.result), 
-                      file = self.results_file)
+                      file = results_file)
+        
+        results_file.close()
+        myprint(Verbosity.all, "Done printing results")
 
 #endregion TASKS
 
@@ -138,8 +146,6 @@ class Server():
         assert(self.is_primary())
         self.role = InstanceRole.BACKUP_SERVER
         self.output_folder = util.output_folder(util.command_arg_name())
-        self.results_file = \
-            open(os.path.join(self.output_folder, 'results.txt'), "w")
         self.backup_server = None
 
         self.port = util.get_unused_port()
@@ -254,7 +260,6 @@ class Server():
             return
         if is_backup(instance):
             self.backup_server = None
-            self.stop_clients()
             return
         if is_primary(instance):
             self.handle_primary_server_failure()
@@ -264,21 +269,19 @@ class Server():
     def create_backup_server_instance(self):
         def pickle_server():
             # exclude things that should not be pickled/unpickled
-            temp_handshake_manager, temp_handhsake_q, temp_results_file, temp_backup_server = \
-                self.handshake_manager, self.handshake_q, self.results_file, self.backup_server
-            self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
-                None, None, None, None
+            temp_handshake_manager, temp_handhsake_q, temp_backup_server = \
+                self.handshake_manager, self.handshake_q, self.backup_server
+            self.handshake_manager, self.handshake_q, self.backup_server = \
+                None, None, None
             client_files = []
             for c in self.clients:
                 if not c.active_timestamp: continue
                 client_files.append((c.events_file, c.exceptions_file))
                 c.events_file, c.exceptions_file = None, None
             with open(util.pickled_file_name(self.output_folder), 'wb') as f:
-                myprint(Verbosity.instance_creation_etc, 
-                        f"At pickle: to_client_id={self.to_client_id}")
                 pickle.dump(self, f)
-            self.handshake_manager, self.handshake_q, self.results_file, self.backup_server = \
-                temp_handshake_manager, temp_handhsake_q, temp_results_file, temp_backup_server
+            self.handshake_manager, self.handshake_q, self.backup_server = \
+                temp_handshake_manager, temp_handhsake_q, temp_backup_server
             for c in self.clients:
                 if not c.active_timestamp: continue
                 c.events_file, c.exceptions_file  = client_files.pop(0)
@@ -288,8 +291,8 @@ class Server():
                     util.output_folder(self.backup_server.name)
             if not self.engine.is_local():
                 util.remote_replace(
-                    self.output_folder,
                     self.backup_server.ip, 
+                    self.output_folder,
                     os.path.join(self.engine.root_folder, 
                                  backup_output_folder))
             else:
@@ -308,7 +311,8 @@ class Server():
             self.backup_server = BackupServerInstance(self.engine)
             self.backup_server_has_been_run = False
             myprint(Verbosity.all, 
-                    f"Created instance object for {self.backup_server.name}")
+                    f"Created instance object for {self.backup_server.name}. Stopping clients...")
+            self.stop_clients()
             return
 
         assert(self.backup_server)

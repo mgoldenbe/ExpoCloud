@@ -2,7 +2,7 @@ class Mode:
     LOCAL = 'LOCAL'
     GCE = 'GCE'
 
-mode = Mode.LOCAL
+mode = Mode.GCE
 
 if mode == Mode.LOCAL:
     from src.engines.local import LocalEngine
@@ -39,4 +39,4 @@ else:
     }
     engine = GCE(config)
 
-Server(tasks, engine, backup = True, min_group_size=20, max_cpus_per_client = 2).run()
+Server(tasks, engine, backup = True, min_group_size=20).run()

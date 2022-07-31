@@ -201,7 +201,7 @@ def attempt_command(command, n_attempts = 3):
             attempts_left -= 1
             time.sleep(Constants.SSH_RETRY_DELAY)
 
-    myprint(Verbosity.shell_command, f"Failed to execute {command}")
+    myprint(Verbosity.command_lines, f"Failed to execute {command}")
     return None
 
 def remote_execute(ip, command):
