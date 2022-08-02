@@ -262,7 +262,7 @@ class Client:
 
     def run(self):
         myprint(Verbosity.all, "Starting...")
-        while self.tasks or not self.no_further_tasks:
+        while self.tasks or not self.no_further_tasks or self.workers:
             self.health_update()
             if not self.stopped_flag:
                 self.process_workers()
@@ -272,12 +272,6 @@ class Client:
                     self.request_tasks(self.capacity - n_tasks_in_pipeline)
             self.process_messages()
             self.occupy_workers()
-            time.sleep(Constants.CLIENT_CYCLE_WAIT)
-
-        myprint(Verbosity.all, "Waiting for workers to complete...")
-        while self.workers:
-            self.health_update()
-            self.process_workers()
             time.sleep(Constants.CLIENT_CYCLE_WAIT)
 
         myprint(Verbosity.all, "Sending BYE")       

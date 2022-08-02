@@ -25,12 +25,6 @@ class GCE(AbstractEngine):
     def __init__(self, config):
         super().__init__(config)
 
-    def creation_frequency_limit(self):
-        """
-        GCE does not allow more than one instance creation based on a machine image in 10 minutes.
-        """
-        return 600
-
     def create_instance_raw(self, name, image):
         """
         Creates a new instance based on the image with the given name. If successful, returns the name and internal ip of the new instance, which is formed from the `prefix` and the current timestamp. Otherwise, returns `None`.

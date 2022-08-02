@@ -2,14 +2,15 @@ class Mode:
     LOCAL = 'LOCAL'
     GCE = 'GCE'
 
-mode = Mode.GCE
+mode = Mode.LOCAL
 
 if mode == Mode.LOCAL:
     from src.engines.local import LocalEngine
 else:
     from src.engines.gce.engine import GCE
 from src.server import Server
-from examples.agent_assignment.instance import generate_instances
+from examples.agent_assignment.instance \
+    import generate_instances
 from examples.agent_assignment.task import Task
 from examples.agent_assignment.bnb import Option
 
@@ -39,4 +40,4 @@ else:
     }
     engine = GCE(config)
 
-Server(tasks, engine, backup = True, min_group_size=20).run()
+Server(tasks, engine, backup = True, min_group_size=20, max_cpus_per_client=2).run()
