@@ -2,11 +2,7 @@
 
 from multiprocessing import Process, Value, Queue, cpu_count
 import time
-import sys
 import socket
-from multiprocessing.managers import SyncManager
-
-from pkg_resources import working_set
 
 from src.util import myprint
 from src.constants import Verbosity

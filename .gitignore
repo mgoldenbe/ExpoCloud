@@ -4,7 +4,9 @@ out
 err
 temp
 *.ipynb
-docs/
+*docs/
+html/
+test*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

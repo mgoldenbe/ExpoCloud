@@ -14,8 +14,9 @@ try:
     from googleapiclient import discovery
     from oauth2client.client import GoogleCredentials
 except:
-    myprint(Verbosity.all, 'It looks like you are not on GCE')
-    exit(1)
+    if __name__ == '__main__':
+        myprint(Verbosity.all, 'It looks like you are not on GCE')
+        exit(1)
 import time
 
 class GCE(AbstractEngine):
