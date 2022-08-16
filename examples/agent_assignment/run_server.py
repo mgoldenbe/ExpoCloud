@@ -1,6 +1,19 @@
+"""
+Constructs the :any:`Server` object and invokes :any:`Server.run` method.
+"""
+
 class Mode:
+    """
+    Constant to specify whether the experiment is to be run locally or in GCE.
+    """
     LOCAL = 'LOCAL'
+    """
+    Run the experiment locally.
+    """    
     GCE = 'GCE'
+    """
+    Run the experiment on GCE.
+    """    
 
 if __name__ == '__main__':
     mode = Mode.LOCAL
@@ -13,10 +26,10 @@ if __name__ == '__main__':
     from examples.agent_assignment.instance \
         import generate_instances
     from examples.agent_assignment.task import Task
-    from examples.agent_assignment.bnb import Option
+    from examples.agent_assignment.bnb import Option, Algorithm
 
     tasks = []
-    max_n_tasks = 17
+    max_n_tasks = 7
     options = {Option.HEURISTIC}
 
     for n_tasks in range(max_n_tasks, max_n_tasks + 1):
@@ -24,7 +37,7 @@ if __name__ == '__main__':
             instances = generate_instances(
                 n_tasks, n_agents, first_id=0, last_id=19)
             for i, instance in enumerate(instances):
-                tasks.append(Task(options, instance, timeout=60000))
+                tasks.append(Task(Algorithm(options, instance), timeout=60000))
 
     engine, config = None, None
     if mode == Mode.LOCAL:

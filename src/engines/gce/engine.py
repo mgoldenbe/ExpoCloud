@@ -1,8 +1,12 @@
+"""
+The class for working with the Google Compute Engine.
+"""
 # Adapted from https://cloud.google.com/compute/docs/reference/rest/beta/instances/insert
 
 from sys import stderr
+from typing import Union
 
-from src.util import myprint
+from src.util import my_print
 from src.constants import Verbosity
 
 from src import util
@@ -15,7 +19,7 @@ try:
     from oauth2client.client import GoogleCredentials
 except:
     if __name__ == '__main__':
-        myprint(Verbosity.all, 'It looks like you are not on GCE')
+        my_print(Verbosity.all, 'It looks like you are not on GCE')
         exit(1)
 import time
 
@@ -24,12 +28,35 @@ class GCE(AbstractEngine):
     The google compute engine.
     """
     def __init__(self, config):
+        """
+        The constructor.
+
+        :param config: The configuration dictionary with the following keys:
+
+        * ``prefix`` - the prefix used for the names of instances.
+        * ``project`` - the name of the project on the cloud.
+        * ``zone`` - the zone where the instances are to be located.
+        * ``server_image`` - the name of the machine image for a server.
+        * ``client_image`` - the name of the machine image for a server.
+        * ``root_folder`` - the path to the root folder, e.g. ~/ExpoCloud/.
+        * ``project_folder`` - the path to the experiment in dot notation, e.g. ``'examples.agent_assignment'``.
+
+        :type config: dict
+        """
+        self.zone = config['zone']
         super().__init__(config)
 
-    def create_instance_raw(self, name, image):
+    def create_instance_native(self, name: str, image: str) -> Union[str, None]:
         """
-        Creates a new instance based on the image with the given name. If successful, returns the name and internal ip of the new instance, which is formed from the `prefix` and the current timestamp. Otherwise, returns `None`.
-        """
+        Creates a new instance based on the image with the given name. If successful, returns the internal IP address of the new instance. Otherwise, returns ``None``.
+
+        :param name: The name to be assigned to the new instance.
+        :type name: str
+        :param image: The name of the machine image for the new instance.
+        :type image: str
+        :return: The internal IP address of the new instance or ``None``.
+        :rtype: Union[str, None]
+        """        
         credentials = GoogleCredentials.get_application_default()
 
         service = discovery.build('compute', 'beta', credentials=credentials)
@@ -54,9 +81,14 @@ class GCE(AbstractEngine):
         return ip
 
     # https://cloud.google.com/compute/docs/reference/rest/beta/instances/delete
-    def kill_instance(self, name):
+    def kill_instance(self, name) -> str:
         """
-        Kills the specified instance.
+        Terminates the specified instance.
+
+        :param name: The name of the instance to terminate.
+        :type name: str
+        :return: The name of the terminated instance or ``None`` in the case of an exception.
+        :rtype: str
         """
         #myprint(Verbosity.all, "Instance killing is disabled")
         # return
@@ -73,10 +105,14 @@ class GCE(AbstractEngine):
             return None
     
     # Adapted from https://stackoverflow.com/a/39096719/2725810
-    def ip_from_name_(self, name):
+    def ip_from_name_(self, name: str) -> Union[str, None]:
         """
-        Return the instance's internal IP based on it's name.
-        This method should not be invoked directly. Rather, the users of this class should invoke the `create_instance` method.
+        Return the IP address of the instance with the specified name. The internal IP address is returned. This method should not be invoked directly.
+
+        :param name: The name of the instance whose IP address is required.
+        :type name: str
+        :return: The IP address of the instance with the specified name or ``None`` in the case of an exception.
+        :rtype: Union[str, None]
         """
         credentials = GoogleCredentials.get_application_default()
         api = discovery.build('compute', 'v1', credentials=credentials)
@@ -88,7 +124,7 @@ class GCE(AbstractEngine):
                 response = request.execute()
                 if response['status'] == 'RUNNING': break
                 if response['status'] == 'STOPPING':
-                    myprint(Verbosity.instance_creation_etc, 
+                    my_print(Verbosity.instance_creation_etc, 
                             f"The attempt to create {name} was too early")
                     return None
                 time.sleep(5)

@@ -1,29 +1,70 @@
+from typing import Tuple
+from examples.agent_assignment.bnb import Algorithm
 from src.abstract_task import AbstractTask
 from src.util import filter_out, set2str
-from examples.agent_assignment.bnb import Algorithm
 
 class Task(AbstractTask):
-    def __init__(self, options, instance, timeout = 60):
-        self.options = options
-        self.instance = instance
-        self.timeout = timeout
-        self.algorithm = Algorithm(self.options, self.instance)
-        super(Task, self).__init__()
+    def __init__(self, algorithm: Algorithm, timeout = 60):
+        """
+        The constructor.
 
-    def group_parameter_titles(self):
+        :param algorithm: The algorithm used to solve the problem instance.
+        :type algorithm: Algorithm
+        :param timeout: The deadline for the task in seconds.
+        :type timeout: float
+        """
+        super(Task, self).__init__(algorithm, timeout)
+
+    def group_parameter_titles(self) -> Tuple[str]:
+        """
+        Return the tuple of names of parameters that determine groups for counting the number of non-hard instances.
+
+        :return: The tuple of names of parameters that determine groups for counting the number of non-hard instances.
+        :rtype: Tuple[str]
+        """
         return filter_out(self.parameter_titles(), ('id',))
 
-    def parameter_titles(self):
+    def parameter_titles(self) -> Tuple[str]:
+        """
+        Return the tuple of names of parameters that characterize the task.
+
+        :return: The tuple of names of parameters that characterize the task.
+        :rtype: Tuple[str]
+        """
         return self.instance.parameter_titles() + ("Options",)
         
-    def parameters(self):
-        return self.instance.parameters() + (set2str(self.options),)
-    
-    def result_titles(self):
-        return self.algorithm.result_titles()
+    def parameters(self) -> tuple:
+        """
+        Return the tuple of parameters that characterize the task.
 
-    def hardness_parameters(self):
+        :return: The tuple of parameters that characterize the task.
+        :rtype: tuple
+        """
+        return self.instance.parameters() + (set2str(self.options),)
+
+    def hardness_parameters(self) -> tuple:
+        """
+        Return the tuple of parameters determining the hardness of the task. This is to be used to initialize the Hardness object.
+
+        :return: The tuple of parameters determining the hardness of the task. 
+        :rtype: tuple
+        """        
         return (self.instance.n_tasks, self.instance.n_agents)
 
-    def run(self):
+    def result_titles(self) -> Tuple[str]:
+        """
+        Return the tuple of names of output values for the solved task.
+
+        :return: The tuple of names of output values for the solved task.
+        :rtype: Tuple[str]
+        """
+        return self.algorithm.result_titles()
+
+    def run(self) -> tuple:
+        """
+        Return the tuple of output values for the solved task.
+
+        :return: The tuple of output values for the solved task.
+        :rtype: tuple
+        """
         return self.algorithm.search()

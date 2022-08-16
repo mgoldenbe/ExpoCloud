@@ -1,32 +1,38 @@
+"""
+The parent class for all cloud-based compute engines.
+"""
+
 from ast import Constant
 from ctypes import util
 import time
 import sys
 
-from src.util import myprint
+from src.util import my_print
 from src.constants import Verbosity
 from src.util import handle_exception, my_ip, remote_execute, InstanceRole, next_instance_name
 from src.constants import Constants
 
 class AbstractEngine:
     """
-    Parent for engines other than the local machine. We assume that the engine supports machine images. The children should implement two methods: `create_instance` returning the name and the internal IP address of the new instance, `kill_instance` killing the instance with the given name and `creation_frequency_limit` returning the number of seconds that needs to pass between two instance creations.
+    The parent class for all cloud-based compute engines. We assume that the engine supports machine images. The children should implement two methods: ``create_instance_native`` for creating the compute instance and ``kill_instance`` for terminating a compute instance.
     """
-    def __init__(self, config):
+    def __init__(self, config: dict):
         """
-        `config` should have the following keys:
+        The constructor.
 
-        `prefix` - the prefix used for the names of instances
-        `project` - the name of the project on the cloud
-        `zone` - the name of the zone on the cloud
-        `server_image` - the name of the machine image for a server
-        `client_image` - the name of the machine image for a server
-        `root_folder` - the path to the root folder, e.g. ~/ExpoCloud/
-        `project_folder` - dotted path to run_server.py and run_client.py.
-        """
+        :param config: The configuration dictionary with the following keys:
+
+        * ``prefix`` - the prefix used for the names of instances.
+        * ``project`` - the name of the project on the cloud.
+        * ``server_image`` - the name of the machine image for a server.
+        * ``client_image`` - the name of the machine image for a server.
+        * ``root_folder`` - the path to the root folder, e.g. ~/ExpoCloud/.
+        * ``project_folder`` - the path to the experiment in dot notation, e.g. ``'examples.agent_assignment'``.
+
+        :type config: dict
+        """              
         self.prefix = config['prefix']
         self.project = config['project']
-        self.zone = config['zone']
         self.server_image = config['server_image']
         self.client_image = config['client_image']
         self.root_folder = config['root_folder']
@@ -38,51 +44,96 @@ class AbstractEngine:
         # halved, because doubling after the first failure.
         self.creation_delay = Constants.MIN_CREATION_DELAY / 2
 
-    def is_local(self): return False
+    def is_local(self) -> bool:
+        """
+        Returns ``False`` to signify that this engine is not local.
 
-    def creation_attempt_allowed(self):
+        :return: ``False``
+        :rtype: bool
+        """        
+        return False
+
+    def creation_attempt_allowed(self) -> bool:
         """
-        Makes sure that instance creation attempts are performed with exponentially increasing delays.
-        """
+        Check whether ``self.creation_delay`` seconds have passed since the last attempt of instance creation.
+
+        :return: ``True`` if ``self.creation_delay`` seconds have passed since the last attempt of instance creation and ``False`` otherwise.
+        :rtype: bool
+        """        
         return \
             time.time() - self.last_creation_timestamp >= self.creation_delay
 
-    def next_instance_name(self, type):
-        return next_instance_name(type, self.prefix, self.instance_id)
+    def next_instance_name(self, role: InstanceRole) -> str:
+        """
+        Generate the name for the next instance with the given role.
 
-    def image_name(self, type):
-        if type == InstanceRole.CLIENT: return self.client_image
+        :param role: The role of the instance.
+        :type role: InstanceRole
+        :return: The name for the next instance with the given role.
+        :rtype: str
+        """        
+        return next_instance_name(role, self.prefix, self.instance_id)
+
+    def image_name(self, role: InstanceRole) -> str:
+        """
+        Return the name of the machine image for an instance with the given role.
+
+        :param role: The role of the instance.
+        :type role: InstanceRole
+        :return: The name of the machine image for an instance with the given role.
+        :rtype: str
+        """      
+        if role == InstanceRole.CLIENT: return self.client_image
         return self.server_image
 
-    def create_instance(self, name, type):
+    def create_instance(self, name: str, role:InstanceRole) -> str:
         """
-        Create the instance of the given type.
-        """
+        Create the instance of the given type and return its IP address.
+
+        :param name: The name of the instance to be created.
+        :type name: str
+        :param role: The role of the instance to be created.
+        :type role: InstanceRole
+        :return: The IP address of the newly created instance.
+        :rtype: str
+        """        
         if not self.creation_attempt_allowed(): return None
-        myprint(Verbosity.instance_creation_etc, 
-                f"Attempting to create {type} named {name}")
-        ip = self.create_instance_raw(name, self.image_name(type))
+        my_print(Verbosity.instance_creation_etc, 
+                f"Attempting to create {role} named {name}")
+        ip = self.create_instance_native(name, self.image_name(role))
         if not ip:
             self.creation_delay *= 2
-            myprint(Verbosity.instance_creation_etc,
+            my_print(Verbosity.instance_creation_etc,
                     f"Next creation attempt in {self.creation_delay} seconds")
             return None
             
-        myprint(Verbosity.all, f"New {name}")
+        my_print(Verbosity.all, f"New {name}")
         self.last_creation_timestamp = time.time()
         return ip
 
-    def run_instance(self, name, ip, type, server_port, max_cpus = None):
+    def run_instance(self, name: str, ip: str, role: InstanceRole, 
+                     server_port: int, max_cpus:int = None):
         """
-        Create and run the instance of the given type.
-        """
+        Run the instance.
+
+        :param name: The name of the instance to be run.
+        :type name: str
+        :param ip: The IP address of the instance to be run.
+        :type ip: str
+        :param role: The role of the instance to be run.
+        :type role: InstanceRole
+        :param server_port: The port for handshaking with the primary server.
+        :type server_port: int
+        :param max_cpus: The maximum number of workers to be used by the client instance, defaults to ``None``, i.e. unlimited.
+        :type max_cpus: int, optional
+        """        
         try:
             python_arg = {
                 InstanceRole.BACKUP_SERVER: 
                     f"src.run_backup {my_ip()} {server_port} {name}",
                 InstanceRole.CLIENT: 
                     f"{self.project_folder}.run_client {my_ip()} {server_port} {name} {max_cpus}"
-            }[type]
+            }[role]
             command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
             remote_execute(ip, command)
             self.creation_delay = Constants.MIN_CREATION_DELAY

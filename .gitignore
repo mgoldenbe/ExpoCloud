@@ -1,11 +1,14 @@
 update.sh
 output
-out
-err
+out*
+err*
+out*/
+err*/
 temp
 *.ipynb
 *docs/
 html/
+.vscode/
 test*
 
 # Byte-compiled / optimized / DLL files

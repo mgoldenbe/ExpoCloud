@@ -1,51 +1,130 @@
+"""
+Defines parent classes for all ProblemInstance, Algorithm and Task classes.
+"""
+
+from __future__ import annotations
+from typing import Tuple
 from src import util
+
+class AbstractProblemInstance:
+    """
+    This is a parent class for ProblemInstance classes, such as :any:`examples.agent_assignment.instance.ProblemInstance`.
+    """    
+    def __init__(self, id: int):
+        """
+        The constructor.
+
+        :param id: Instance id.
+        :type id: int
+        """        
+        self.id = id
+
+class AbstractAlgorithm:
+    """
+    This is a parent class for Algorithm classes, such as :any:`examples.agent_assignment.bnb.Algorithm`.
+    """    
+    def __init__(self, options:set, instance: AbstractProblemInstance):
+        """
+        The constructor.
+
+        :param options: The options controlling the behavior of the algorithm. 
+        :type options: set
+        :param instance: The problem instance
+        :type instance: AbstractProblemInstance
+        """        
+        self.instance = instance
+        self.options = options
 
 class AbstractTask:
     """
-    This is a parent class for Task classes. A Task class's __init__ call it's superclass's __init__ at the end. Each task should have a set self.timeout.
+    This is a parent class for Task classes for experiments. See :any:`examples.agent_assignment.task.Task` for an example.
     """
 
     class Hardness:
         """
-        Each Task object has `self.hardness`, which is an instance of the Hardness class. It's instantiation depends on the existence of hardness_parameters() method in Task. 
-        
-        The AbstractTask.Hardness class provides default comparators. A Task class can overwrite these comparators or anyother method of AbstractTask.Hardness by subclassing it's own Hardness class from AbstractTask.Hardness.
+        The default class to represent hardness of a task. It provides default comparators.
         """
-        def __init__(self, params):
+        def __init__(self, params: tuple):
+            """
+            The constructor.
+
+            :param params: The tuple of parameters determining the task's hardness.
+            :type params: tuple
+            """            
             self.params = params
 
-        def __str__(self):
+        def __str__(self) -> str:
+            """
+            Return the string representation of hardness.
+
+            :return: The string representation of hardness.
+            :rtype: str
+            """            
             return str(self.params)
 
-        def __repr__(self):
+        def __repr__(self) -> str:
+            """
+            Return the string representation of hardness.
+
+            :return: The string representation of hardness.
+            :rtype: str
+            """
             return str(self)
 
-        def __lt__(self, other):
+        def __lt__(self, other: Hardness) -> bool:
             """
-            Returns true if this task is strictly easier than the `other` task.
-            The following implementation relies on the existence of the hardness_parameters() function.
-            """
+            Checks whether this hardness is strictly less than :paramref:`other`.
+
+            :param other: The hardness to be compared to.
+            :type other: Hardness
+            :return: ``True`` if hardness is strictly less than :paramref:`other` and ``False`` otherwise.
+            :rtype: bool
+            """            
             return util.all_lt(self.params, other.params)
         
-        def __le__(self, other):
+        def __le__(self, other: Hardness) -> bool:
             """
-            Returns true if this task is easier than or of the same hardness as the `other` task.
-            The following implementation relies on the existence of the hardness_parameters() function.
+            Checks whether this hardness is less than or equal to :paramref:`other`.
+
+            :param other: The hardness to be compared to.
+            :type other: Hardness
+            :return: ``True`` if hardness is less than or equal to :paramref:`other` and ``False`` otherwise.
+            :rtype: bool
             """
             return util.all_le(self.params, other.params)
         
-    def __init__(self):
+    def __init__(self, algorithm:AbstractAlgorithm, timeout: float):
+        """
+        The constructor.
+
+        :param algorithm: The algorithm used to solve the problem instance.
+        :type algorithm: AbstractAlgorithm
+        :param timeout: The deadline for the task in seconds.
+        :type timeout: float
+        """
+        self.algorithm = algorithm      
+        self.options = algorithm.options
+        self.instance = algorithm.instance
+        self.timeout = timeout
         self.hardness = self.Hardness(self.hardness_parameters())
         self.result = None
 
-    def group_parameter_titles(self):
+    def group_parameter_titles(self) -> Tuple[str]:
         """
-        Returns the tuples of titles of columns for parameters that determine groups for counting the number of non-hard instances.
-        """
+        Return the tuple of names of parameters that determine groups for counting the number of non-hard instances.
+
+        :return: The tuple of names of parameters that determine groups for counting the number of non-hard instances.
+        :rtype: Tuple[str]
+        """        
         return ()
     
-    def group_parameters(self):
-        """Returns the parameters that determine groups for counting the number of non-hard instances. This method should not be overrided."""
+    def group_parameters(self) -> tuple:
+        """
+        Return the tuple of parameters that determine groups for counting the number of non-hard instances.
+
+        :return: The tuple of parameters that determine groups for counting the number of non-hard instances.
+        :rtype: tuple
+        """
         all_titles = self.parameter_titles()
         group_titles = self.group_parameter_titles()
         indices = [i for i in range(len(all_titles)) 
@@ -54,33 +133,65 @@ class AbstractTask:
         all_params = self.parameters()
         return tuple(all_params[i] for i in indices)
 
-    def parameter_titles(self):
+    def parameter_titles(self) -> Tuple[str]:
         """
-        Returns the tuples of titles of columns for parameters for formatted output.
-        Global id and id per parameter setting are included by default and should not appear here.
+        Return the tuple of names of parameters that characterize the task.
+
+        :return: The tuple of names of parameters that characterize the task.
+        :rtype: Tuple[str]
         """
         return ()
 
-    def parameters(self):
+    def parameters(self) -> tuple:
         """
-        Returns the tuple of parameters. These parameters are used by the server:
-        1. To determine the instance number for each parameter setting.
-        2. To provide formatted output.
-        Global id and id per parameter setting are included by default and should not appear here.
-        """
-        return ()
-    
-    def result_titles(self):
-        """
-        Returns the tuples of titles of columns for results for formatted output.
+        Return the tuple of parameters that characterize the task.
+
+        :return: The tuple of parameters that characterize the task.
+        :rtype: tuple
         """
         return ()
     
-    def __str__(self):
+    def hardness_parameters(self) -> tuple:
+        """
+        Return the tuple of parameters determining the hardness of the task. This is to be used to initialize the Hardness object.
+
+        :return: The tuple of parameters determining the hardness of the task. 
+        :rtype: tuple
+        """        
+        return ()
+    
+    def result_titles(self) -> Tuple[str]:
+        """
+        Return the tuple of names of output values for the solved task.
+
+        :return: The tuple of names of output values for the solved task.
+        :rtype: Tuple[str]
+        """
+        return ()
+    
+    def run(self) -> tuple:
+        """
+        Return the tuple of output values for the solved task.
+
+        :return: The tuple of output values for the solved task.
+        :rtype: tuple
+        """
+        return ()
+
+    def __str__(self) -> str:
+        """
+        Return the string representation of the task.
+
+        :return: The string representation of the task.
+        :rtype: str
+        """        
         return str(self.parameters())
     
     def __repr__(self):
         """
-        For easy printing of containers of tasks.
+        Return the string representation of the task.
+
+        :return: The string representation of the task.
+        :rtype: str
         """
         return str(self)
