@@ -111,6 +111,7 @@ class Server():
                     if not (self.tasks_remain() or self.clients):
                         self.print_results()
                         printed_results = True
+                        if self.engine.is_local(): break
                 time.sleep(Constants.SERVER_CYCLE_WAIT)
         except Exception as e:
             handle_exception(e, "Exception in Server.run")
