@@ -250,6 +250,21 @@ def get_unused_port() -> int:
         s.bind(('',0))
         return s.getsockname()[1]
 
+def extended_prefix(role: InstanceRole, prefix: str) -> str:
+    """
+    Compute the prefix for the name for the next cloud instance based on the role.
+
+    :param role: The role of the new instance.
+    :type role: InstanceRole
+    :param prefix: The prefix to be used in the name.
+    :type prefix: str
+    :return: The prefix for the name for the next cloud instance based on the role.
+    :rtype: str
+    """
+    first_dash = '-' if prefix else ''
+    extension = 'client' if role == InstanceRole.CLIENT else 'server'
+    return f"{prefix}{first_dash}{extension}"
+
 def next_instance_name(
     role: InstanceRole, prefix: str, instance_id: dict) -> str:
     """
@@ -267,11 +282,7 @@ def next_instance_name(
     if role not in instance_id: instance_id[role] = 0
     instance_id[role] += 1
     id = instance_id[role]
-    first_dash = '-' if prefix else ''
-    if role == InstanceRole.CLIENT: 
-        return f"{prefix}{first_dash}client-{id}"
-    assert(role == InstanceRole.BACKUP_SERVER)
-    return f"{prefix}{first_dash}server-{id}"
+    return f"{extended_prefix(role, prefix)}-{id}"
 
 def get_guest_qs(ip: str, port: int, q_names: List[str])->tuple[queue.Queue]:
     """

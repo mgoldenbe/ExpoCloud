@@ -3,11 +3,11 @@ The parent class for all cloud-based compute engines.
 """
 
 from ast import Constant
-from ctypes import util
 import time
 import sys
+from typing import List
 
-from src.util import my_print
+from src.util import my_print, extended_prefix
 from src.constants import Verbosity
 from src.util import handle_exception, my_ip, remote_execute, InstanceRole, next_instance_name
 from src.constants import Constants
@@ -139,3 +139,40 @@ class AbstractEngine:
             self.creation_delay = Constants.MIN_CREATION_DELAY
         except Exception as e:
             handle_exception(e, "Exception in the abstract engine's run_instance method", True) # Stop, should never happen
+    
+    def list_instances(self) -> List[tuple]:
+        """
+        Returns list of tuples ``(<name>, <ip>, <status>)`` for each instance. The particular engine subclasses should implemented this method.
+
+        :return: The list of tuples ``(<name>, <ip>, <status>)`` for each instance.
+        :rtype: List[tuple]
+        """
+        return []
+
+    def kill_instance(self, name: str) -> str:
+        """
+        Terminates the specified instance. The particular engine subclasses should implemented this method.
+
+        :param name: The name of the instance to terminate.
+        :type name: str
+        :return: The name of the terminated instance or ``None`` in the case of an exception.
+        :rtype: str
+        """
+        return None
+    
+    def kill_dangling_clients(self, existing_clients: List[str]):
+        """
+        Kill clients whose name has the given prefix, but is not in the provided list of names. The method relies on the particular engine implementing the `list_instances` method.
+
+        :param prefix: The given prefix.
+        :type prefix: str
+        :param existing_clients: The names of instances that are not to be killed.
+        :type existing_clients: List[str]
+        """
+        prefix = extended_prefix(InstanceRole.CLIENT, self.prefix)   
+        for name in \
+            [el[0] for el in self.list_instances() 
+                   if el[0].startswith(prefix) and \
+                      el[0] not in existing_clients]:
+            self.kill_instance(name)
+        

@@ -223,6 +223,7 @@ class Server():
         self.backup_server = None
         self.init_handshake_q()
         for c in self.clients: c.engine = self.engine
+        self.engine.kill_dangling_clients([c.name for c in self.clients])
     
     def handle_primary_server_failure(self):
         """

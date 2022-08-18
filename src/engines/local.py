@@ -124,3 +124,9 @@ class LocalEngine:
             my_print(Verbosity.all, 
                     f"Process {pid} did not terminate in time, killing it")
             proc.kill()
+    
+    def kill_dangling_instances(self, _existing_clients):
+        """
+        This method is provided for the local engine for compatibility only.
+        """
+        pass

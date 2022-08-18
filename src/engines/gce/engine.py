@@ -4,7 +4,7 @@ The class for working with the Google Compute Engine.
 # Adapted from https://cloud.google.com/compute/docs/reference/rest/beta/instances/insert
 
 from sys import stderr
-from typing import Union
+from typing import Union, List
 
 from src.util import my_print
 from src.constants import Verbosity
@@ -80,6 +80,31 @@ class GCE(AbstractEngine):
             return None
         return ip
 
+    def list_instances(self) -> List[tuple]:
+        """
+        Returns list of tuples ``(<name>, <ip>, <status>)`` for each instance.
+        :return: The list of tuples ``(<name>, <ip>, <status>)`` for each instance.
+        :rtype: List[tuple]
+        """
+        result = []
+
+        credentials = GoogleCredentials.get_application_default()
+        service = discovery.build('compute', 'v1', credentials=credentials)
+        request = service.instances().list(project=self.project, zone=self.zone)
+
+        while request is not None:
+            response = request.execute()
+            for instance in response['items']:
+                result.append(
+                    (instance['name'], 
+                    instance['networkInterfaces'][0]['networkIP'],
+                    instance['status']))
+
+            request = service.instances().list_next(
+                previous_request=request, previous_response=response)
+
+        return result
+        
     # https://cloud.google.com/compute/docs/reference/rest/beta/instances/delete
     def kill_instance(self, name) -> str:
         """
