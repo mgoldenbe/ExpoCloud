@@ -30,14 +30,17 @@ if __name__ == '__main__':
 
     tasks = []
     max_n_tasks = 7
-    options = {Option.HEURISTIC}
-
-    for n_tasks in range(max_n_tasks, max_n_tasks + 1):
-        for n_agents in range(n_tasks, n_tasks + 1):
-            instances = generate_instances(
-                n_tasks, n_agents, first_id=0, last_id=19)
-            for i, instance in enumerate(instances):
-                tasks.append(Task(Algorithm(options, instance), timeout=60000))
+    n_instances_per_setting = 20
+    
+    for options in [{Option.NO_CUTOFFS}, {}, {Option.HEURISTIC}]:
+        for n_tasks in range(max_n_tasks, max_n_tasks + 1):
+            for n_agents in range(n_tasks, n_tasks + 1):
+                instances = generate_instances(
+                    n_tasks, n_agents, 
+                    first_id = 0, last_id = n_instances_per_setting - 1)
+                for instance in instances:
+                    tasks.append(
+                        Task(Algorithm(options, instance), timeout=60000))
 
     engine, config = None, None
     if mode == Mode.LOCAL:
