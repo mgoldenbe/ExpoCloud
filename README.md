@@ -1,5 +1,7 @@
-# ExpoCloud: a Framework for Time and Budget-Effective Parameter Space Explorations using a Cloud Compute Engine
-## (This page is the user documentation. The developer documentation is available at https://expocloud.netlify.app)
+ExpoCloud: a Framework for Time and Budget-Effective Parameter Space Explorations using a Cloud Compute Engine
+==============================================================================================================
+
+***(This page is the user documentation. The developer documentation is available at https://expocloud.netlify.app)***
 
 Large parameter space explorations are some of the most time consuming yet critically important tasks in many fields of modern scientific research. ExpoCloud enables the researcher to harness cloud compute resources to achieve time and budget-effective concurrent large-scale parameter space explorations. 
 
