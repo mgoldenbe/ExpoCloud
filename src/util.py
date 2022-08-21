@@ -557,23 +557,9 @@ def set2str(s: set, sep = ';') -> str:
     """
     return list2str(sorted(list(s)), sep)
 
-def all_lt(t1: tuple, t2: tuple) -> bool:
+def tuple_le(t1, t2):
     """
-    Returns ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are strictly smaller than the corresponding elements of ``t2``.
-
-    :param t1: The first tuple being compared.
-    :type t1: tuple
-    :param t2: The second tuple being compared.
-    :type t2: tuple
-    :return: ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are strictly smaller than the corresponding elements of ``t2``; otherwise ``False``.
-    :rtype: bool
-    """    
-    if not t1 or not t2 or len(t1) != len(t2): return False
-    return sum([el1 < el2 for el1, el2 in zip(t1, t2)])==len(t1)
-
-def all_le(t1, t2):
-    """
-    Returns ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are strictly smaller than or equal to the corresponding elements of ``t2``.
+    Returns ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are smaller than or equal to the corresponding elements of ``t2``.
 
     :param t1: The first tuple being compared.
     :type t1: tuple
@@ -582,7 +568,22 @@ def all_le(t1, t2):
     :return: ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are strictly smaller than or equal to the corresponding elements of ``t2``; otherwise ``False``.
     :rtype: bool
     """
-    return t1 == t2 or all_lt(t1, t2)
+    if not t1 or not t2 or len(t1) != len(t2): return False
+    return sum([el1 <= el2 for el1, el2 in zip(t1, t2)])==len(t1)
+
+def tuple_lt(t1: tuple, t2: tuple) -> bool:
+    """
+    Returns ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are smaller than or equal to the corresponding elements of ``t2``, with at least one inequality being strict.
+
+    :param t1: The first tuple being compared.
+    :type t1: tuple
+    :param t2: The second tuple being compared.
+    :type t2: tuple
+    :return: ``True`` if ``t1`` and ``t2`` are of same length and all elements of ``t1`` are smaller than or equal to the corresponding elements of ``t2``, with at least one inequality being strict; otherwise ``False``.
+    :rtype: bool
+    """    
+    if not (t1 <= t2): return False
+    return sum([el1 < el2 for el1, el2 in zip(t1, t2)]) > 0
 
 def filter_out(t1: Tuple, t2: Tuple) -> Tuple:
     """

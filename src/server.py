@@ -67,6 +67,7 @@ class Server():
         for i, t in enumerate(tasks): 
             t.orig_id = i
         self.tasks = sorted(tasks, key = lambda t: t.hardness)
+        
         self.next_task = 0 # next task to be given to clients
         self.tasks_from_failed = [] # tasks from failed clients to reassign
         self.min_hard = [] # hardness for each minimally hard task

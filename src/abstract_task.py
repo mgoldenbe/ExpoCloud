@@ -79,8 +79,8 @@ class AbstractTask:
             :type other: Hardness
             :return: ``True`` if hardness is strictly less than :paramref:`other` and ``False`` otherwise.
             :rtype: bool
-            """            
-            return util.all_lt(self.params, other.params)
+            """
+            return util.tuple_lt(self.params, other.params)
         
         def __le__(self, other: Hardness) -> bool:
             """
@@ -91,7 +91,7 @@ class AbstractTask:
             :return: ``True`` if hardness is less than or equal to :paramref:`other` and ``False`` otherwise.
             :rtype: bool
             """
-            return util.all_le(self.params, other.params)
+            return util.tuple_le(self.params, other.params)
         
     def __init__(self, algorithm:AbstractAlgorithm, timeout: float):
         """

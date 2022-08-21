@@ -1,5 +1,5 @@
 from typing import Tuple
-from examples.agent_assignment.bnb import Algorithm
+from examples.agent_assignment.bnb import Algorithm, Option
 from src.abstract_task import AbstractTask
 from src.util import filter_out, set2str
 
@@ -48,8 +48,16 @@ class Task(AbstractTask):
 
         :return: The tuple of parameters determining the hardness of the task. 
         :rtype: tuple
-        """        
-        return (self.instance.n_tasks, self.instance.n_agents)
+        """
+        def options2hardness(options):
+            if Option.HEURISTIC in options: return 0
+            if Option.NO_CUTOFFS in options: return 2
+            return 1
+                   
+        return (
+            options2hardness(self.options), 
+            self.instance.n_tasks, 
+            self.instance.n_agents)
 
     def result_titles(self) -> Tuple[str]:
         """
