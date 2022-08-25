@@ -2,13 +2,14 @@
 The implementation of the Branch and Bound (B&B) algorithm.
 """
 
+from __future__ import annotations
+
 __author__ = "Meir Goldenberg"
 __copyright__ = "Copyright 2022, The ExpoCloud Project"
 __license__ = "MIT"
 __version__ = "1.0"
 __email__ = "mgoldenb@g.jct.ac.il"
 
-from __future__ import annotations
 from xml.etree.ElementInclude import include
 from examples.agent_assignment.instance import *
 from src.util import filter_indices, list2str

@@ -35,7 +35,7 @@ class Verbosity:
     Output detailing the synchronization of messages from the primary and the backup servers to the clients.
     """ 
 
-    messages = True
+    messages = False
     """
     Output detailing the processing of messages.
     """ 

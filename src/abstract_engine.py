@@ -107,6 +107,7 @@ class AbstractEngine:
         my_print(Verbosity.instance_creation_etc, 
                 f"Attempting to create {role} named {name}")
         ip = self.create_instance_native(name, self.image_name(role))
+        self.last_creation_timestamp = time.time()
         if not ip:
             self.creation_delay *= 2
             my_print(Verbosity.instance_creation_etc,
@@ -114,7 +115,7 @@ class AbstractEngine:
             return None
             
         my_print(Verbosity.all, f"New {name}")
-        self.last_creation_timestamp = time.time()
+        self.creation_delay = Constants.MIN_CREATION_DELAY
         return ip
 
     def run_instance(self, name: str, ip: str, role: InstanceRole, 
@@ -142,7 +143,6 @@ class AbstractEngine:
             }[role]
             command = f"cd {self.root_folder}; python -m {python_arg} >out 2>err &"
             remote_execute(ip, command)
-            self.creation_delay = Constants.MIN_CREATION_DELAY
         except Exception as e:
             handle_exception(e, "Exception in the abstract engine's run_instance method", True) # Stop, should never happen
     

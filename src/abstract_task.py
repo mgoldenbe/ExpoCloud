@@ -2,13 +2,14 @@
 Defines parent classes for all ProblemInstance, Algorithm and Task classes.
 """
 
+from __future__ import annotations
+
 __author__ = "Meir Goldenberg"
 __copyright__ = "Copyright 2022, The ExpoCloud Project"
 __license__ = "MIT"
 __version__ = "1.0"
 __email__ = "mgoldenb@g.jct.ac.il"
 
-from __future__ import annotations
 from typing import Tuple
 from src import util
 

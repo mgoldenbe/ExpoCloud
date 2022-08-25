@@ -377,7 +377,7 @@ def handle_exception(e: Exception, msg: str, exit_flag: bool = True,
     :param to_primary_q: The queue for communication with the primary server or ``None``; defaults to ``None``.
     :type to_primary_q: queue.Queue, optional
     """                     
-    descr = str(time.time()) + "   " + msg
+    descr = msg
     e_str = traceback.format_exc()
     if e_str: descr += "\n" + e_str
 

@@ -22,7 +22,7 @@ class Mode:
     """    
 
 if __name__ == '__main__':
-    mode = Mode.LOCAL
+    mode = Mode.GCE
 
     if mode == Mode.LOCAL:
         from src.engines.local import LocalEngine
@@ -35,18 +35,18 @@ if __name__ == '__main__':
     from examples.agent_assignment.bnb import Option, Algorithm
 
     tasks = []
-    max_n_tasks = 7
+    max_n_tasks = 15
     n_instances_per_setting = 20
-    
+
     for options in [{Option.NO_CUTOFFS}, {}, {Option.HEURISTIC}]:
         for n_tasks in range(max_n_tasks, max_n_tasks + 1):
             for n_agents in range(n_tasks, n_tasks + 1):
                 instances = generate_instances(
-                    n_tasks, n_agents, 
+                    n_tasks, n_agents,
                     first_id = 0, last_id = n_instances_per_setting - 1)
                 for instance in instances:
                     tasks.append(
-                        Task(Algorithm(options, instance), timeout=60000))
+                        Task(Algorithm(options, instance), timeout=60))
 
     engine, config = None, None
     if mode == Mode.LOCAL:
@@ -63,4 +63,4 @@ if __name__ == '__main__':
         }
         engine = GCE(config)
 
-    Server(tasks, engine, backup = True, min_group_size=20, max_cpus_per_client=2).run()
+    Server(tasks, engine, backup = True, min_group_size=20, max_cpus_per_client=None).run()

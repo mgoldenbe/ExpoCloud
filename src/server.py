@@ -361,6 +361,9 @@ class Server():
         """
         self.clients = \
             list(filter(lambda c: c.name != name, self.clients))
+        if self.is_primary():
+            self.message_to_instance(
+                self.backup_server, MessageType.CLIENT_TERMINATED, name)
 
     def kill_instance(self, instance: Instance):
         """
@@ -486,8 +489,6 @@ class Server():
         for c in self.clients:
             if c.is_healthy(tasks_remain): continue
             self.kill_client(c.name)
-            self.message_to_instance(
-                self.backup_server, MessageType.CLIENT_TERMINATED, c.name)
         
         if self.backup_server and \
            not self.backup_server.is_healthy(tasks_remain):
