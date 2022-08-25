@@ -1,3 +1,13 @@
+"""
+The classes for controlling verbosity and for defining constants to be used throughout.
+"""
+
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 import os
 
 class Verbosity:

@@ -2,6 +2,12 @@
 The parent class for all cloud-based compute engines.
 """
 
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 from ast import Constant
 import time
 import sys

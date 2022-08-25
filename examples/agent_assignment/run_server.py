@@ -2,6 +2,12 @@
 Constructs the :any:`Server` object and invokes :any:`Server.run` method.
 """
 
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 class Mode:
     """
     Constant to specify whether the experiment is to be run locally or in GCE.

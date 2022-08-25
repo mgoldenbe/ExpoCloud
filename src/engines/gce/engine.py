@@ -1,7 +1,12 @@
 """
 The class for working with the Google Compute Engine.
 """
-# Adapted from https://cloud.google.com/compute/docs/reference/rest/beta/instances/insert
+
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
 
 from sys import stderr
 from typing import Union, List
@@ -46,6 +51,7 @@ class GCE(AbstractEngine):
         self.zone = config['zone']
         super().__init__(config)
 
+    # Adapted from https://cloud.google.com/compute/docs/reference/rest/beta/instances/insert
     def create_instance_native(self, name: str, image: str) -> Union[str, None]:
         """
         Creates a new instance based on the image with the given name. If successful, returns the internal IP address of the new instance. Otherwise, returns ``None``.

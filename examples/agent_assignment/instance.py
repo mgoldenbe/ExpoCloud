@@ -2,6 +2,12 @@
 The classes related to the agent assignment problem and the function for generating the problem instances.
 """
 
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 import random
 from typing import List
 from src.abstract_task import AbstractProblemInstance

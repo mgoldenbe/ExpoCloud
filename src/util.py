@@ -2,6 +2,12 @@
 Utility enums and functions.
 """
 
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 try:
     from googleapiclient import discovery
     from oauth2client.client import GoogleCredentials

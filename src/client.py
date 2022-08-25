@@ -2,6 +2,12 @@
 The two classes implementing the client - the ``Worker`` and the ``Client``.
 """
 
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 from multiprocessing import Process, Value, Queue, cpu_count
 import time
 import socket

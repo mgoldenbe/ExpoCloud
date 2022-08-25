@@ -8,6 +8,12 @@ The script for running the backup server on the backup server instance, which co
 Note that this script is provided by the framework and is not to be supplied by the user.
 """
 
+__author__ = "Meir Goldenberg"
+__copyright__ = "Copyright 2022, The ExpoCloud Project"
+__license__ = "MIT"
+__version__ = "1.0"
+__email__ = "mgoldenb@g.jct.ac.il"
+
 from src.constants import Constants
 import multiprocessing
 import pickle
